@@ -1,6 +1,6 @@
-use papan_api::{PapanProject};
+use papan_api::PapanProject;
 use papan_document::PapanDocument;
-use papan_ir::{NetKind, PadShape, PcbIr};
+use papan_ir::{NetKind, PadShape, PcbIr, Side};
 use papan_types::{Diagnostics, Severity};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -143,14 +143,65 @@ fn add_component_at(part: String, x_mm: f64, y_mm: f64, state: State<'_, AppStat
     Ok(view_from_project(project))
 }
 
+fn component_info(project: &PapanProject, designator: &str) -> Option<(f64, bool)> {
+    project.document().ir.components.iter()
+        .find(|c| c.designator.eq_ignore_ascii_case(designator))
+        .map(|c| (c.rotation.0 as f64 / 1000.0, matches!(c.side, Side::Top)))
+}
+
 #[tauri::command]
 fn move_component_to(designator: String, x_mm: f64, y_mm: f64, state: State<'_, AppState>) -> Result<BoardView, String> {
+    let mut guard = state.project.lock().map_err(|_| "state lock poisoned")?;
+    let project = guard.as_mut().ok_or("Belum ada proyek. Buka atau buat proyek dulu.")?;
+    let (rot, _) = component_info(project, &designator).unwrap_or((0.0, true));
+    let result = (|| -> Result<(), String> {
+        let mut board = project.board();
+        let cref = board.component(&designator).ok_or_else(|| format!("Komponen '{designator}' tidak ditemukan"))?;
+        board.place_mm(&cref, x_mm, y_mm, rot).map_err(|e| e.to_string())?;
+        Ok(())
+    })();
+    if let Err(e) = result { return Err(e); }
+    Ok(view_from_project(project))
+}
+
+#[tauri::command]
+fn rotate_component(designator: String, rotation_deg: f64, state: State<'_, AppState>) -> Result<BoardView, String> {
     let mut guard = state.project.lock().map_err(|_| "state lock poisoned")?;
     let project = guard.as_mut().ok_or("Belum ada proyek. Buka atau buat proyek dulu.")?;
     let result = (|| -> Result<(), String> {
         let mut board = project.board();
         let cref = board.component(&designator).ok_or_else(|| format!("Komponen '{designator}' tidak ditemukan"))?;
-        board.place_mm(&cref, x_mm, y_mm, 0.0).map_err(|e| e.to_string())?;
+        board.rotate_component(&cref, rotation_deg).map_err(|e| e.to_string())?;
+        Ok(())
+    })();
+    if let Err(e) = result { return Err(e); }
+    Ok(view_from_project(project))
+}
+
+#[tauri::command]
+fn delete_component(designator: String, state: State<'_, AppState>) -> Result<BoardView, String> {
+    let mut guard = state.project.lock().map_err(|_| "state lock poisoned")?;
+    let project = guard.as_mut().ok_or("Belum ada proyek. Buka atau buat proyek dulu.")?;
+    let result = (|| -> Result<(), String> {
+        let mut board = project.board();
+        let cref = board.component(&designator).ok_or_else(|| format!("Komponen '{designator}' tidak ditemukan"))?;
+        board.remove_component(&cref).map_err(|e| e.to_string())?;
+        Ok(())
+    })();
+    if let Err(e) = result { return Err(e); }
+    Ok(view_from_project(project))
+}
+
+#[tauri::command]
+fn flip_component(designator: String, state: State<'_, AppState>) -> Result<BoardView, String> {
+    let mut guard = state.project.lock().map_err(|_| "state lock poisoned")?;
+    let project = guard.as_mut().ok_or("Belum ada proyek. Buka atau buat proyek dulu.")?;
+    let (_, is_top) = component_info(project, &designator).ok_or_else(|| format!("Komponen '{designator}' tidak ditemukan"))?;
+    let side = if is_top { Side::Bottom } else { Side::Top };
+    let result = (|| -> Result<(), String> {
+        let mut board = project.board();
+        let cref = board.component(&designator).ok_or_else(|| format!("Komponen '{designator}' tidak ditemukan"))?;
+        board.set_side(&cref, side).map_err(|e| e.to_string())?;
         Ok(())
     })();
     if let Err(e) = result { return Err(e); }
@@ -162,7 +213,8 @@ pub fn run() {
     tauri::Builder::default()
         .manage(AppState::default())
         .invoke_handler(tauri::generate_handler![
-            app_info, open_project, new_project, check_source, get_view, add_component_at, move_component_to
+            app_info, open_project, new_project, check_source, get_view,
+            add_component_at, move_component_to, rotate_component, delete_component, flip_component
         ])
         .run(tauri::generate_context!())
         .expect("error while running PAPAN desktop");

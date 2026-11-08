@@ -41,4 +41,8 @@ pre{margin:0;max-height:180px;overflow:auto;white-space:pre-wrap;font:12px/1.4 C
 .modal-card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px;width:100%;max-width:360px}
 .modal-card label{display:block;margin:8px 0;color:var(--muted)} .modal-card input{width:100%;margin-top:4px;background:#0b1219;color:var(--fg);border:1px solid var(--line);border-radius:8px;padding:8px}
 .actions{display:flex;gap:8px;justify-content:flex-end;margin-top:12px}
+.help-card{max-width:640px}
+.help-grid{display:grid;grid-template-columns:auto 1fr;gap:6px 14px;align-items:center;font-size:13px}
+kbd{display:inline-block;min-width:28px;text-align:center;background:#0b1219;border:1px solid #3b4f66;border-bottom-width:2px;border-radius:5px;padding:2px 7px;font:12px/1.4 Consolas,monospace;color:#e6edf3}
+.palette.pulse{box-shadow:inset 0 0 0 2px var(--accent2)}
 @media (max-width:980px){.workspace{grid-template-columns:180px 1fr}.side{display:none}}
