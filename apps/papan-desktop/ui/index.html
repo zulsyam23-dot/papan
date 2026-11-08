@@ -36,15 +36,28 @@
 
       <div id="workspace" class="workspace hidden">
         <aside id="palette" class="palette">
-          <h3>Komponen (klik untuk pilih)</h3>
-          <p class="help"><strong>Taruh:</strong> klik komponen → klik papan. <strong>Geser:</strong> tahan-klik kiri pada komponen lalu seret. <strong>Pan:</strong> tahan tombol <strong>tengah</strong> lalu seret. <strong>Zoom:</strong> scroll. <strong>Batal:</strong> klik kanan / Esc.</p>
+          <h3>Alat (klik tombol)</h3>
+          <p class="help">Pilih alat dengan tombol atau pintasan keyboard. Cocok untuk pemula.</p>
+          <div class="tools">
+            <button class="tool-btn" id="tool-select" title="Pilih komponen (klik di papan)"><span class="ticon">↖</span><span>Pilih</span><kbd>Esc</kbd></button>
+            <button class="tool-btn" id="tool-add" title="Tambah komponen (A): pilih jenis lalu klik papan"><span class="ticon">＋</span><span>Tambah</span><kbd>A</kbd></button>
+            <button class="tool-btn" id="tool-move" title="Geser komponen terpilih (M/G)"><span class="ticon">✥</span><span>Geser</span><kbd>M</kbd></button>
+            <button class="tool-btn" id="tool-rotate" title="Putar komponen terpilih 90° (R)"><span class="ticon">⟳</span><span>Putar</span><kbd>R</kbd></button>
+            <button class="tool-btn" id="tool-flip" title="Balik sisi komponen (F)"><span class="ticon">⇄</span><span>Flip Sisi</span><kbd>F</kbd></button>
+            <button class="tool-btn danger" id="tool-delete" title="Hapus komponen terpilih (Del)"><span class="ticon">🗑</span><span>Hapus</span><kbd>Del</kbd></button>
+            <button class="tool-btn" id="tool-fit" title="Zoom pas ke papan (Home)"><span class="ticon">⤢</span><span>Zoom Pas</span><kbd>Home</kbd></button>
+            <button class="tool-btn" id="tool-help" title="Bantuan pintasan (?/F1)"><span class="ticon">?</span><span>Bantuan</span><kbd>?</kbd></button>
+          </div>
+          <div id="tool-info" class="note">Alat aktif: <strong>Pilih</strong>. Klik komponen untuk memilih.</div>
+          <hr/>
+          <h3>Komponen untuk ditaruh</h3>
+          <p class="help">Klik jenis komponen, lalu klik di area papan.</p>
           <div class="parts">
             <button class="part" data-part="resistor"><div class="icon">R</div><div>Resistor</div></button>
             <button class="part" data-part="capacitor"><div class="icon">C</div><div>Kapasitor</div></button>
             <button class="part" data-part="led"><div class="icon">LED</div><div>LED</div></button>
             <button class="part" data-part="diode"><div class="icon">D</div><div>Dioda</div></button>
           </div>
-          <div id="tool-info" class="note">Alat aktif: <strong>Pilih/Geser</strong></div>
           <label class="snap"><input id="snap" type="checkbox" checked /> Snap grid 1 mm</label>
           <hr/>
           <h3>Ringkasan</h3>

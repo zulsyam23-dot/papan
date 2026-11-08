@@ -102,7 +102,10 @@ function setSelected(designator) {
   selectedDesignator = designator || null;
   render();
   const c = selectedComponent();
-  if (c) setStatus(`Dipilih: ${c.designator} (${c.part}) @ ${c.x.toFixed(2)},${c.y.toFixed(2)} mm ${Math.round(c.rotation_deg||0)}°`);
+  if (c) {
+    setStatus(`Dipilih: ${c.designator} (${c.part}) @ ${c.x.toFixed(2)},${c.y.toFixed(2)} mm ${Math.round(c.rotation_deg||0)}° (M geser, R putar, F flip, Del hapus)`);
+  }
+  if (!activePart) setActivePart(null); else syncToolButtons();
 }
 function zoomBy(factor, cx, cy) {
   if (!currentView) return;
@@ -125,12 +128,21 @@ async function call(cmd, args={}) {
   catch(e){ setStatus(String(e), 'err'); $('diag-text').textContent = String(e); $('diag-text').className='err'; throw e; }
 }
 
+function syncToolButtons() {
+  const setA = (id, on) => { const el=$(id); if(el) el.classList.toggle('active', !!on); };
+  setA('tool-select', !activePart && !(moving && moving.keyboard));
+  setA('tool-add', !!activePart);
+  setA('tool-move', !!(moving && moving.keyboard));
+}
 function setActivePart(part) {
   activePart = part;
   document.querySelectorAll('.part').forEach(el => el.classList.toggle('active', !!part && el.dataset.part===part));
-  $('tool-info').innerHTML = part ? `Alat aktif: <strong>Taruh ${esc(part)}</strong> (klik di papan). Esc untuk batal.` : 'Alat aktif: <strong>Pilih/Geser</strong>';
+  $('tool-info').innerHTML = part
+    ? `Alat: <strong>Taruh ${esc(part)}</strong> — klik di papan. (Kanan/Esc batal)`
+    : (selectedDesignator ? `Alat: <strong>Pilih</strong> — ${esc(selectedDesignator)} dipilih. Gunakan tombol Geser/Putar/Flip/Hapus atau pintasan.` : 'Alat: <strong>Pilih</strong> — klik komponen di papan untuk memilih.');
   $('drop-hint').classList.toggle('hidden', !part);
   $('board-canvas').style.cursor = part ? 'copy' : 'crosshair';
+  syncToolButtons();
 }
 
 function findComponentAt(pt) {
@@ -162,6 +174,18 @@ function toggleHelp(force) {
   showHelp = typeof force === 'boolean' ? force : !showHelp;
   $('help-overlay').classList.toggle('hidden', !showHelp);
 }
+function activateAddMode() {
+  setActivePart(null);
+  setStatus('Mode Tambah (A): pilih jenis komponen di bawah, lalu klik papan untuk menaruh. (Kanan/Esc batal)');
+  $('palette')?.classList?.add('pulse'); setTimeout(()=>$('palette')?.classList?.remove('pulse'), 700);
+  syncToolButtons();
+}
+function activateSelectMode() {
+  if (moving && currentView) { moving.component.x=moving.ox; moving.component.y=moving.oy; moving=null; pendingPt=null; render(); }
+  setActivePart(null);
+  setStatus('Mode Pilih: klik komponen di papan untuk memilih, lalu gunakan alat (Geser/Putar/Flip/Hapus).');
+  syncToolButtons();
+}
 async function doRotate(deltaDeg) {
   const c = selectedComponent();
   if (!c || !currentView?.can_edit) { setStatus('Pilih komponen dulu (klik komponen), lalu tekan R.', 'err'); return; }
@@ -181,12 +205,11 @@ async function doFlip() {
 }
 function startMoveSelected() {
   const c = selectedComponent();
-  if (!c || !currentView?.can_edit) { setStatus('Pilih komponen dulu, lalu tekan M/G untuk geser.', 'err'); return; }
-  // attach-to-cursor move mode (KiCad M/G style)
+  if (!c || !currentView?.can_edit) { setStatus('Pilih komponen dulu (klik di papan), lalu klik Geser atau tekan M.', 'err'); return; }
   moving = { designator: c.designator, component: c, ox: c.x, oy: c.y, sx: 0, sy: 0, dragging: true, keyboard: true };
   $('board-canvas').style.cursor='grabbing';
-  setStatus(`Geser ${c.designator}: gerakkan mouse lalu klik kiri untuk tempat, kanan/Esc batal.`);
-  render();
+  setStatus(`Geser ${c.designator}: gerakkan mouse, klik kiri = tempat, kanan/Esc = batal.`);
+  syncToolButtons(); render();
 }
 async function nudgeSelected(dx, dy) {
   const c = selectedComponent();
@@ -274,7 +297,7 @@ function setupCanvas() {
     if (k==='Home') { e.preventDefault(); fitView(); render(); return; }
     if (k==='+' || k==='=') { e.preventDefault(); zoomBy(1.15); return; }
     if (k==='-' || k==='_') { e.preventDefault(); zoomBy(1/1.15); return; }
-    if (k==='a' || k==='A') { e.preventDefault(); setActivePart(null); setStatus('Mode tambah: klik komponen di palet kiri, lalu klik papan untuk menaruh.'); $('palette')?.classList?.add('pulse'); setTimeout(()=>$('palette')?.classList?.remove('pulse'), 600); return; }
+    if (k==='a' || k==='A') { e.preventDefault(); activateAddMode(); return; }
     if (k==='m' || k==='M' || k==='g' || k==='G') { e.preventDefault(); startMoveSelected(); return; }
     if (k==='r' || k==='R') { e.preventDefault(); await doRotate(e.shiftKey ? -90 : 90); return; }
     if (k==='f' || k==='F') { e.preventDefault(); await doFlip(); return; }
@@ -315,8 +338,16 @@ async function init() {
   $('fit-btn').onclick = () => { if(currentView){ fitView(); render(); } };
   $('help-btn').onclick = () => toggleHelp();
   $('help-close').onclick = () => toggleHelp(false);
+  $('tool-select') && ($('tool-select').onclick = () => activateSelectMode());
+  $('tool-add') && ($('tool-add').onclick = () => activateAddMode());
+  $('tool-move') && ($('tool-move').onclick = () => startMoveSelected());
+  $('tool-rotate') && ($('tool-rotate').onclick = () => doRotate(90));
+  $('tool-flip') && ($('tool-flip').onclick = () => doFlip());
+  $('tool-delete') && ($('tool-delete').onclick = () => doDelete());
+  $('tool-fit') && ($('tool-fit').onclick = () => { if(currentView){ fitView(); render(); } });
+  $('tool-help') && ($('tool-help').onclick = () => toggleHelp());
   $('welcome-path').value = String.raw`C:\Users\PC\Documents\papan\examples\ujicoba`;
   setActivePart(null);
-  setStatus('Siap. ?=pintasan, A=tambah, klik komponen lalu klik papan untuk menaruh.', 'ok');
+  setStatus('Siap. Klik tombol Alat atau pakai pintasan (?). Pilih komponen lalu taruh di papan.', 'ok');
 }
 init();
