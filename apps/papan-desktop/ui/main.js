@@ -1,13 +1,15 @@
 const invoke = window.__TAURI__?.core?.invoke;
 let currentView = null;
 let pan = { x: 30, y: 30 }, zoom = 5;
-let panning = null, moving = null;
+let panning = null, moving = null, activePart = null, raf = 0, pendingPt = null;
 
 const $ = id => document.getElementById(id);
-const layerColors = { 'f.cu': '#e06b6b', 'b.cu': '#5b8def', 'in1.cu': '#d4b85a', 'in2.cu': '#5ad49a' };
+const layerColors = { 'f.cu': '#d94f4f', 'b.cu': '#4f7fd9', 'in1.cu': '#d9b84f', 'in2.cu': '#4fd99a' };
 function layerColor(name, copper) { return layerColors[(name||'').toLowerCase()] || (copper ? '#c98a5a' : '#8a949e'); }
 function esc(s){ return String(s??'').replace(/[&<>"']/g, c=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c])); }
 function setStatus(msg, cls=''){ const s=$('status'); s.textContent=msg; s.className='status '+cls; }
+function snapOn(){ return $('snap')?.checked; }
+function snap(v){ return snapOn() ? Math.round(v) : v; }
 
 function boardPoint(clientX, clientY) {
   const svg = $('board-canvas'), r = svg.getBoundingClientRect();
@@ -15,12 +17,19 @@ function boardPoint(clientX, clientY) {
   const sx = clientX - r.left, sy = clientY - r.top;
   return { x: (sx - pan.x) / zoom, y: b.height_mm - (sy - pan.y) / zoom };
 }
-
+function clampToBoard(pt) {
+  if (!pt || !currentView) return pt;
+  const b = currentView.board;
+  return { x: Math.max(0, Math.min(b.width_mm, snap(pt.x))), y: Math.max(0, Math.min(b.height_mm, snap(pt.y))) };
+}
+function setCoords(pt) {
+  $('coords').textContent = pt ? `X: ${pt.x.toFixed(2)} mm  Y: ${pt.y.toFixed(2)} mm` : 'X: -- mm  Y: -- mm';
+}
 function fitView() {
   const svg = $('board-canvas'), r = svg.getBoundingClientRect(), b = currentView?.board;
   if (!r.width || !r.height || !b?.width_mm || !b?.height_mm) return;
-  const pad = 40;
-  zoom = Math.max(0.2, Math.min(60, Math.min((r.width-pad*2)/b.width_mm, (r.height-pad*2)/b.height_mm)));
+  const pad = 36;
+  zoom = Math.max(0.2, Math.min(80, Math.min((r.width-pad*2)/b.width_mm, (r.height-pad*2)/b.height_mm)));
   pan.x = (r.width - b.width_mm*zoom)/2;
   pan.y = (r.height + b.height_mm*zoom)/2;
 }
@@ -31,27 +40,37 @@ function render() {
   const layerById = Object.fromEntries((currentView.layers||[]).map(l=>[l.id,l]));
   let out = `<rect width="100%" height="100%" fill="transparent"/>`;
   out += `<g transform="translate(${pan.x},${pan.y}) scale(${zoom},${-zoom}) translate(0,${-b.height_mm})">`;
-  out += `<rect x="0" y="0" width="${b.width_mm}" height="${b.height_mm}" rx="0.5" fill="var(--board)" stroke="var(--edge)" stroke-width="${1.2/zoom}"/>`;
+  // grid
+  if (zoom > 2.5) {
+    const step = zoom > 10 ? 1 : 5;
+    let dots = '';
+    for (let x=0; x<=b.width_mm; x+=step) for (let y=0; y<=b.height_mm; y+=step) dots += `<circle cx="${x}" cy="${y}" r="${0.12/Math.max(1,zoom/8)}" fill="#2a3a4d"/>`;
+    out += dots;
+  }
+  out += `<rect x="0" y="0" width="${b.width_mm}" height="${b.height_mm}" rx="0.4" fill="#132713" fill-opacity="0.95" stroke="#d4a24c" stroke-width="${1.4/zoom}"/>`;
+  out += `<line x1="0" y1="0" x2="0" y2="${Math.min(5,b.height_mm)}" stroke="#d4a24c" stroke-width="${1/zoom}" opacity="0.6"/>`;
+  out += `<line x1="0" y1="0" x2="${Math.min(5,b.width_mm)}" y2="0" stroke="#d4a24c" stroke-width="${1/zoom}" opacity="0.6"/>`;
   for (const t of (currentView.traces||[])) {
     if (!t.points || t.points.length < 2) continue;
     const l = layerById[t.layer], color = l ? layerColor(l.name,l.copper) : '#59a869';
-    out += `<polyline points="${t.points.map(p=>`${p.x},${p.y}`).join(' ')}" fill="none" stroke="${color}" stroke-width="${Math.max(t.width_mm,0.18)}" stroke-linecap="round" stroke-linejoin="round" opacity="0.95"/>`;
+    out += `<polyline points="${t.points.map(p=>`${p.x},${p.y}`).join(' ')}" fill="none" stroke="${color}" stroke-width="${Math.max(t.width_mm,0.18)}" stroke-linecap="round" stroke-linejoin="round"/>`;
   }
   for (const v of (currentView.vias||[])) {
-    out += `<circle cx="${v.x}" cy="${v.y}" r="${Math.max(v.diameter_mm/2,0.25)}" fill="#b8c0cc" stroke="#eef" stroke-width="${0.06/zoom}"/>`;
+    out += `<circle cx="${v.x}" cy="${v.y}" r="${Math.max(v.diameter_mm/2,0.25)}" fill="#c8d0da" stroke="#fff" stroke-width="${0.06/zoom}"/>`;
     out += `<circle cx="${v.x}" cy="${v.y}" r="${Math.max(v.drill_mm/2,0.12)}" fill="#0b1219"/>`;
   }
   for (const c of (currentView.components||[])) {
     if (!c.placed) continue;
-    const hi = moving && moving.designator === c.designator;
-    out += `<g class="comp" data-designator="${esc(c.designator)}" transform="translate(${c.x},${c.y}) rotate(${c.rotation_deg||0})" style="cursor:${currentView.can_edit?'move':'default'}">`;
+    const sel = moving && moving.designator === c.designator;
+    out += `<g transform="translate(${c.x},${c.y}) rotate(${c.rotation_deg||0})">`;
     for (const p of (c.pads||[])) {
-      if (p.shape === 'circle') out += `<circle cx="${p.x}" cy="${p.y}" r="${Math.max(p.w,p.h)/2}" fill="${hi?'#ffd166':'#cd7f32'}" opacity="0.85"/>`;
-      else out += `<rect x="${p.x-p.w/2}" y="${p.y-p.h/2}" width="${p.w}" height="${p.h}" rx="0.08" fill="${hi?'#ffd166':'#cd7f32'}" opacity="0.85"/>`;
+      const fill = sel ? '#ffd166' : '#c87933';
+      if (p.shape === 'circle') out += `<circle cx="${p.x}" cy="${p.y}" r="${Math.max(p.w,p.h)/2}" fill="${fill}" stroke="#3a220f" stroke-width="${0.06/zoom}"/>`;
+      else out += `<rect x="${p.x-p.w/2}" y="${p.y-p.h/2}" width="${p.w}" height="${p.h}" rx="${Math.min(p.w,p.h)*0.12}" fill="${fill}" stroke="#3a220f" stroke-width="${0.06/zoom}"/>`;
     }
-    out += `<circle cx="0" cy="0" r="0.35" fill="#fff"/>`;
-    out += `<text x="0.7" y="0.45" font-size="1.4" fill="#fff" font-weight="600" font-family="Segoe UI, sans-serif" transform="scale(1,-1)">${esc(c.designator)}</text>`;
-    out += `<text x="0.7" y="-0.9" font-size="0.9" fill="#c9d6e2" font-family="Segoe UI, sans-serif" transform="scale(1,-1)">${esc(c.part)}</text>`;
+    out += `<circle cx="0" cy="0" r="${0.3/Math.max(1,zoom/12)}" fill="#fff" opacity="0.9"/>`;
+    out += `<text x="0.8" y="0.5" font-size="1.5" fill="${sel?'#ffd166':'#fff'}" font-weight="700" font-family="Segoe UI, sans-serif" transform="scale(1,-1)" paint-order="stroke" stroke="#0b1219" stroke-width="0.12">${esc(c.designator)}</text>`;
+    out += `<text x="0.8" y="-1.0" font-size="0.95" fill="#cfe3ff" font-family="Segoe UI, sans-serif" transform="scale(1,-1)" paint-order="stroke" stroke="#0b1219" stroke-width="0.08">${esc(c.part)}</text>`;
     out += `</g>`;
   }
   out += `</g>`;
@@ -62,25 +81,39 @@ function renderInfo() {
   if (!currentView) return;
   $('welcome').classList.add('hidden'); $('workspace').classList.remove('hidden');
   const b = currentView.board;
-  $('summary').innerHTML = `<div><strong>${esc(currentView.name)}</strong></div><div>Ukuran: ${b.width_mm} × ${b.height_mm} mm</div><div>Komponen: ${currentView.components.length}</div><div>Net: ${currentView.nets.length}</div><div>Jalur: ${currentView.traces.length} · Via: ${currentView.vias.length}</div>`;
+  $('summary').innerHTML = `<div><strong>${esc(currentView.name)}</strong></div><div>Board: ${b.width_mm} × ${b.height_mm} mm</div><div>Komponen: ${currentView.components.length}</div><div>Net: ${currentView.nets.length}</div><div>Jalur: ${currentView.traces.length} · Via: ${currentView.vias.length}</div><div class="muted" style="margin-top:6px">${currentView.can_edit?'Mode edit: klik-taruh, drag-geser, tengah=pan, kanan/Esc=batal.':'Mode lihat/check.'}</div>`;
   $('source').value = currentView.source || '';
   const errs = currentView.diagnostics||[];
-  $('diag-text').textContent = errs.length ? `${errs.length} diagnostik (${currentView.has_errors?'ada error':'peringatan/info'})` : 'Tidak ada masalah terdeteksi.';
-  $('diag-text').className = currentView.has_errors ? 'err' : (errs.length ? 'muted' : 'ok');
+  $('diag-text').textContent = errs.length ? `${errs.length} diagnostik` : 'Bersih';
+  $('diag-text').className = currentView.has_errors ? 'err' : (errs.length ? '' : 'ok');
   $('diagnostics').textContent = errs.length ? errs.map(d=>`[${d.severity}] ${d.code}: ${d.message}`).join('\n') : 'Bersih.';
   $('diagnostics').className = currentView.has_errors ? 'err' : 'ok';
   $('lists').innerHTML = `<strong>Nets</strong><div class="muted">${(currentView.nets||[]).map(n=>esc(n.name)).join(', ')||'-'}</div><br/><strong>Komponen</strong><div class="muted">${(currentView.components||[]).map(c=>`${esc(c.designator)} (${esc(c.part)})${c.placed?'':' [belum ditempatkan]'}`).join('<br/>')||'-'}</div>`;
 }
 
-async function applyView(view) { currentView = view; renderInfo(); fitView(); render(); setStatus('Siap', 'ok'); }
+async function applyView(view, keepViewport = true) {
+  const had = !!currentView;
+  currentView = view;
+  renderInfo();
+  if (!had || !keepViewport) fitView();
+  render();
+}
 async function call(cmd, args={}) {
-  try { setStatus('Memproses...'); return await invoke(cmd, args); }
+  try { setStatus('Memproses...'); const r = await invoke(cmd, args); setStatus('Siap','ok'); return r; }
   catch(e){ setStatus(String(e), 'err'); $('diag-text').textContent = String(e); $('diag-text').className='err'; throw e; }
+}
+
+function setActivePart(part) {
+  activePart = part;
+  document.querySelectorAll('.part').forEach(el => el.classList.toggle('active', !!part && el.dataset.part===part));
+  $('tool-info').innerHTML = part ? `Alat aktif: <strong>Taruh ${esc(part)}</strong> (klik di papan). Esc untuk batal.` : 'Alat aktif: <strong>Pilih/Geser</strong>';
+  $('drop-hint').classList.toggle('hidden', !part);
+  $('board-canvas').style.cursor = part ? 'copy' : 'crosshair';
 }
 
 function findComponentAt(pt) {
   if (!pt || !currentView) return null;
-  let best=null, bestD=3.0; // mm hit radius
+  let best=null, bestD=Math.max(2.5, 8/zoom);
   for (const c of (currentView.components||[])) {
     if (!c.placed) continue;
     const d = Math.hypot(c.x-pt.x, c.y-pt.y);
@@ -89,57 +122,103 @@ function findComponentAt(pt) {
   return best;
 }
 
-function setupDragDrop() {
-  document.querySelectorAll('.part[draggable]').forEach(el => {
-    el.addEventListener('dragstart', e => { e.dataTransfer.setData('text/papan-part', el.dataset.part); e.dataTransfer.effectAllowed='copy'; });
-  });
-  const zone = $('drop-zone'), hint = $('drop-hint');
-  zone.addEventListener('dragover', e => { if (e.dataTransfer.types.includes('text/papan-part')) { e.preventDefault(); hint.classList.remove('hidden'); } });
-  zone.addEventListener('dragleave', e => { if (e.target===zone) hint.classList.add('hidden'); });
-  zone.addEventListener('drop', async e => {
-    const part = e.dataTransfer.getData('text/papan-part');
-    hint.classList.add('hidden');
-    if (!part || !currentView) return;
-    e.preventDefault();
-    if (!currentView.can_edit) { setStatus('Buka proyek (bukan mode check sementara) untuk menambah komponen.', 'err'); return; }
-    const bp = boardPoint(e.clientX, e.clientY);
-    const x = Math.max(0, Math.min(currentView.board.width_mm, bp?.x ?? 10));
-    const y = Math.max(0, Math.min(currentView.board.height_mm, bp?.y ?? 10));
-    try { applyView(await call('add_component_at', { part, xMm: x, yMm: y })); setStatus(`Komponen ${part} ditambahkan.`, 'ok'); }
-    catch(_) {}
-  });
+async function placePartAt(part, pt) {
+  if (!currentView?.can_edit) { setStatus('Buka/Buat proyek dulu (mode edit) untuk menaruh komponen.', 'err'); return; }
+  const p = clampToBoard(pt);
+  try { applyView(await call('add_component_at', { part, xMm: p.x, yMm: p.y })); setStatus(`${part} ditambahkan.`, 'ok'); }
+  catch(_) {}
 }
 
+function scheduleRender() { if (raf) return; raf = requestAnimationFrame(()=>{ raf=0; render(); }); }
+
 function setupCanvas() {
-  const svg = $('board-canvas');
+  const svg = $('board-canvas'), zone = $('drop-zone');
+  zone.addEventListener('contextmenu', e => e.preventDefault());
+  svg.addEventListener('contextmenu', e => e.preventDefault());
+  svg.addEventListener('auxclick', e => { if (e.button === 1) e.preventDefault(); }); // prevent middle-click auto-scroll
+
   svg.addEventListener('wheel', e => {
     if (!currentView) return; e.preventDefault();
-    const r=svg.getBoundingClientRect(), mx=e.clientX-r.left, my=e.clientY-r.top, f=e.deltaY<0?1.15:1/1.15;
-    pan.x = mx-(mx-pan.x)*f; pan.y = my-(my-pan.y)*f; zoom *= f; render();
+    const r=svg.getBoundingClientRect(), mx=e.clientX-r.left, my=e.clientY-r.top;
+    const f = e.deltaY < 0 ? 1.12 : 1/1.12;
+    pan.x = mx-(mx-pan.x)*f; pan.y = my-(my-pan.y)*f; zoom = Math.max(0.15, Math.min(120, zoom*f));
+    render(); setCoords(clampToBoard(boardPoint(e.clientX,e.clientY)));
   }, {passive:false});
+
+  // KiCad-like buttons: Left=select/place/move, Middle=pan, Right=cancel/reserved
   svg.addEventListener('mousedown', e => {
-    if (!currentView || e.button!==0) return;
+    if (!currentView) return;
     const bp = boardPoint(e.clientX, e.clientY);
+    if (e.button === 1) { // middle = pan
+      e.preventDefault();
+      panning = { x: e.clientX-pan.x, y: e.clientY-pan.y, btn:1 };
+      svg.style.cursor='grabbing';
+      return;
+    }
+    if (e.button === 2) { // right = cancel active tool (no pan to avoid left/right confusion)
+      e.preventDefault();
+      if (activePart) { setActivePart(null); setStatus('Batal taruh komponen.'); }
+      else if (moving) { moving.component.x=moving.ox; moving.component.y=moving.oy; moving=null; render(); setStatus('Batal geser.'); }
+      return;
+    }
+    if (e.button !== 0) return;
+    if (activePart) { placePartAt(activePart, bp); return; }
+    // left on component: prepare drag with small threshold
     const c = currentView.can_edit ? findComponentAt(bp) : null;
-    if (c) { moving = { designator: c.designator }; render(); setStatus(`Geser ${c.designator} lalu lepas...`); }
-    else { panning = { x: e.clientX-pan.x, y: e.clientY-pan.y }; }
+    if (c) {
+      moving = { designator: c.designator, component: c, ox: c.x, oy: c.y, sx: e.clientX, sy: e.clientY, dragging: false };
+      svg.style.cursor='grab';
+    }
+    // left on empty: no pan (reserved for future box select) - avoids confusion
   });
+
   window.addEventListener('mousemove', e => {
-    if (moving && currentView) { /* visual follows cursor on commit; keep simple */ return; }
+    const bp = boardPoint(e.clientX, e.clientY); setCoords(bp ? clampToBoard(bp) : null);
+    if (moving) {
+      if (!moving.dragging) {
+        if (Math.hypot(e.clientX - moving.sx, e.clientY - moving.sy) > 4) { moving.dragging = true; svg.style.cursor='grabbing'; }
+        else return;
+      }
+      if (bp) {
+        const p = clampToBoard(bp); moving.component.x = p.x; moving.component.y = p.y; pendingPt = p; scheduleRender();
+      }
+      return;
+    }
     if (panning) { pan.x = e.clientX-panning.x; pan.y = e.clientY-panning.y; render(); }
   });
+
   window.addEventListener('mouseup', async e => {
-    if (moving && currentView) {
-      const d = moving.designator; moving = null;
-      const bp = boardPoint(e.clientX, e.clientY);
-      if (bp) {
-        const x = Math.max(0, Math.min(currentView.board.width_mm, bp.x));
-        const y = Math.max(0, Math.min(currentView.board.height_mm, bp.y));
-        try { applyView(await call('move_component_to', { designator: d, xMm: x, yMm: y })); setStatus(`${d} dipindahkan.`, 'ok'); }
-        catch(_){ render(); }
-      } else render();
+    if (panning && e.button === panning.btn) { panning=null; svg.style.cursor = activePart?'copy':'crosshair'; return; }
+    if (moving && e.button === 0) {
+      const d = moving.designator, comp = moving.component, ox=moving.ox, oy=moving.oy, didDrag = moving.dragging;
+      const p = pendingPt || (didDrag ? clampToBoard(boardPoint(e.clientX,e.clientY)) : null);
+      moving=null; pendingPt=null; svg.style.cursor = activePart?'copy':'crosshair';
+      if (!didDrag) { render(); setStatus(`${d} dipilih.`); return; }
+      if (p && (Math.abs(p.x-ox)>0.001 || Math.abs(p.y-oy)>0.001)) {
+        try { applyView(await call('move_component_to', { designator: d, xMm: p.x, yMm: p.y })); setStatus(`${d} → (${p.x.toFixed(1)}, ${p.y.toFixed(1)}) mm`, 'ok'); }
+        catch(_) { comp.x=ox; comp.y=oy; render(); }
+      } else { comp.x=ox; comp.y=oy; render(); setStatus('Posisi tidak berubah.'); }
     }
-    panning = null;
+  });
+
+  window.addEventListener('keydown', e => {
+    if (e.key==='Escape') {
+      if (moving && currentView) { moving.component.x=moving.ox; moving.component.y=moving.oy; moving=null; render(); }
+      setActivePart(null); setStatus('Batal.');
+    }
+  });
+
+  // fallback HTML5 drag from palette (optional, click-to-place is primary)
+  zone.addEventListener('dragover', e => { if (e.dataTransfer.types.includes('text/papan-part')) { e.preventDefault(); $('drop-hint').classList.remove('hidden'); } });
+  zone.addEventListener('dragleave', e => { if (e.target===zone) $('drop-hint').classList.toggle('hidden', !activePart); });
+  zone.addEventListener('drop', async e => { const part = e.dataTransfer.getData('text/papan-part'); $('drop-hint').classList.toggle('hidden', !activePart); if (part) { e.preventDefault(); placePartAt(part, boardPoint(e.clientX,e.clientY)); } });
+}
+
+function setupPalette() {
+  document.querySelectorAll('.part[data-part]').forEach(el => {
+    el.addEventListener('click', () => setActivePart(activePart===el.dataset.part ? null : el.dataset.part));
+    el.setAttribute('draggable','true');
+    el.addEventListener('dragstart', e => { e.dataTransfer.setData('text/papan-part', el.dataset.part); e.dataTransfer.effectAllowed='copy'; });
   });
 }
 
@@ -147,22 +226,18 @@ function setupModal() {
   const modal = $('modal');
   $('new-btn').onclick = $('welcome-new').onclick = () => modal.classList.remove('hidden');
   $('new-cancel').onclick = () => modal.classList.add('hidden');
-  $('new-ok').onclick = async () => {
-    modal.classList.add('hidden');
-    try { applyView(await call('new_project', { name: $('new-name').value||'Papan Baru', widthMm: +$('new-w').value||80, heightMm: +$('new-h').value||50, layers: Math.max(1, +$('new-l').value||2) })); }
-    catch(_) {}
-  };
+  $('new-ok').onclick = async () => { modal.classList.add('hidden'); try { applyView(await call('new_project', { name: $('new-name').value||'Papan Baru', widthMm: +$('new-w').value||80, heightMm: +$('new-h').value||50, layers: Math.max(1, +$('new-l').value||2) })); setActivePart(null);} catch(_) {} };
 }
 
 async function init() {
   if (!invoke) { setStatus('Tauri API tidak tersedia.', 'err'); return; }
-  try { await invoke('app_info'); } catch {}
-  setupDragDrop(); setupCanvas(); setupModal();
-  $('open-btn').onclick = async () => { const p=$('project-path').value.trim(); if(p) try{ applyView(await call('open_project',{path:p})); }catch(_){} };
-  $('welcome-open').onclick = async () => { const p=$('welcome-path').value.trim(); if(p){ $('project-path').value=p; try{ applyView(await call('open_project',{path:p})); }catch(_){} } };
+  setupPalette(); setupCanvas(); setupModal();
+  $('open-btn').onclick = async () => { const p=$('project-path').value.trim(); if(p) try{ applyView(await call('open_project',{path:p})); setActivePart(null);}catch(_){} };
+  $('welcome-open').onclick = async () => { const p=$('welcome-path').value.trim(); if(p){ $('project-path').value=p; try{ applyView(await call('open_project',{path:p})); setActivePart(null);}catch(_){} } };
   $('check-btn').onclick = async () => { try{ applyView(await call('check_source',{source:$('source').value})); }catch(_){} };
   $('fit-btn').onclick = () => { if(currentView){ fitView(); render(); } };
   $('welcome-path').value = String.raw`C:\Users\PC\Documents\papan\examples\ujicoba`;
-  setStatus('Siap. Buat proyek baru atau buka proyek.');
+  setActivePart(null);
+  setStatus('Siap. Buat/Buka proyek, lalu klik komponen dan klik papan untuk menaruh.', 'ok');
 }
 init();

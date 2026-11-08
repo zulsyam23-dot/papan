@@ -9,11 +9,12 @@
   <body>
     <div class="app">
       <header class="topbar">
-        <div class="brand"><strong>PAPAN</strong> <span>Desain PCB</span></div>
-        <button id="new-btn" class="primary">＋ Buat Proyek Baru</button>
-        <input id="project-path" placeholder="Path proyek/folder .papan (untuk buka)" />
+        <div class="brand"><strong>PAPAN</strong> <span>PCB Editor</span></div>
+        <button id="new-btn" class="primary">＋ Proyek Baru</button>
+        <input id="project-path" placeholder="Path proyek (contoh: examples\ujicoba)" />
         <button id="open-btn">Buka</button>
         <button id="fit-btn">Zoom Pas</button>
+        <span id="coords" class="coords">X: -- mm  Y: -- mm</span>
         <span id="status" class="status">Siap</span>
       </header>
 
@@ -34,15 +35,16 @@
 
       <div id="workspace" class="workspace hidden">
         <aside class="palette">
-          <h3>Komponen</h3>
-          <p class="help">Tarik komponen ke area papan.</p>
+          <h3>Komponen (klik untuk pilih)</h3>
+          <p class="help"><strong>Taruh:</strong> klik komponen → klik papan. <strong>Geser:</strong> tahan-klik kiri pada komponen lalu seret. <strong>Pan:</strong> tahan tombol <strong>tengah</strong> lalu seret. <strong>Zoom:</strong> scroll. <strong>Batal:</strong> klik kanan / Esc.</p>
           <div class="parts">
-            <div class="part" draggable="true" data-part="resistor"><div class="icon">R</div><div>Resistor</div></div>
-            <div class="part" draggable="true" data-part="capacitor"><div class="icon">C</div><div>Kapasitor</div></div>
-            <div class="part" draggable="true" data-part="led"><div class="icon">LED</div><div>LED</div></div>
-            <div class="part" draggable="true" data-part="diode"><div class="icon">D</div><div>Dioda</div></div>
+            <button class="part" data-part="resistor"><div class="icon">R</div><div>Resistor</div></button>
+            <button class="part" data-part="capacitor"><div class="icon">C</div><div>Kapasitor</div></button>
+            <button class="part" data-part="led"><div class="icon">LED</div><div>LED</div></button>
+            <button class="part" data-part="diode"><div class="icon">D</div><div>Dioda</div></button>
           </div>
-          <div class="note muted">Setelah ditaruh, komponen bisa <strong>digeser</strong> dengan drag di papan.</div>
+          <div id="tool-info" class="note">Alat aktif: <strong>Pilih/Geser</strong></div>
+          <label class="snap"><input id="snap" type="checkbox" checked /> Snap grid 1 mm</label>
           <hr/>
           <h3>Ringkasan</h3>
           <div id="summary" class="info"></div>
@@ -51,7 +53,7 @@
         <main class="center">
           <div class="canvas-wrap" id="drop-zone">
             <svg id="board-canvas" xmlns="http://www.w3.org/2000/svg"></svg>
-            <div id="drop-hint" class="drop-hint hidden">Lepaskan untuk menaruh komponen</div>
+            <div id="drop-hint" class="drop-hint hidden">Mode taruh: klik papan (klik kanan/Esc batal)</div>
           </div>
           <div class="diagbar"><strong>Status:</strong> <span id="diag-text" class="muted">-</span></div>
         </main>
