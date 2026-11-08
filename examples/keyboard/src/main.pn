@@ -1,57 +1,211 @@
-board "Mechanical Keyboard Demo"
+# PAPAN Keyboard - Macropad 3x4 (12 tombol mekanikal)
+# Desain nyata (topologi keyboard): matrix 3 baris x 4 kolom, diode per switch,
+# MCU ATmega32U4, konektor USB-C. Tata letak grid 19.05mm (jarak MX).
+# Buka folder proyek ini di PAPAN Desktop: jalur PCB (ratsnest/traces) akan
+# ditampilkan; autoroute berjalan saat dibuka jika belum ada jalur.
 
-size 120mm x 60mm
+board "PAPAN Macropad 3x4"
+
+size 100mm x 76mm
 thickness 1.6mm
 layers 2
 
-component MCU: "ATmega32U4"
-component USB: "USB-C"
-component R1: resistor { value: 22Ω }
-component R2: resistor { value: 22Ω }
-component C1: capacitor { value: 100nF }
-component C2: capacitor { value: 10uF }
+# -- Kontroler & konektor --
+component U1: "ATmega32U4"
+component J1: "USB-C"
+component R_CC1: resistor { value: 5.1kΩ }
+component R_CC2: resistor { value: 5.1kΩ }
+component C_VCC: capacitor { value: 100nF }
 
-net VBUS { type: power voltage: 5V }
-net VCC { type: power voltage: 5V }
-net GND { type: ground }
-net DPLUS_USB
-net DPLUS_MCU
-net DMINUS_USB
-net DMINUS_MCU
+# -- Tombol mekanikal (switch) 3x4 = 12 --
+component SW1: switch
+component SW2: switch
+component SW3: switch
+component SW4: switch
+component SW5: switch
+component SW6: switch
+component SW7: switch
+component SW8: switch
+component SW9: switch
+component SW10: switch
+component SW11: switch
+component SW12: switch
 
-connect USB.VBUS -> VBUS
-connect USB.GND -> GND
-connect USB.5 -> DPLUS_USB
-connect USB.6 -> DMINUS_USB
-connect USB.CC1 -> GND
-connect USB.CC2 -> GND
-connect USB.SBU1 -> GND
-connect USB.SBU2 -> GND
-connect USB.SHIELD -> GND
+# -- Diode matrix (1 per tombol, col2row) --
+component D1: diode
+component D2: diode
+component D3: diode
+component D4: diode
+component D5: diode
+component D6: diode
+component D7: diode
+component D8: diode
+component D9: diode
+component D10: diode
+component D11: diode
+component D12: diode
 
-connect R1.1 -> DPLUS_USB
-connect R1.2 -> DPLUS_MCU
-connect R2.1 -> DMINUS_USB
-connect R2.2 -> DMINUS_MCU
+# -- Daya & USB --
+net VCC
+net GND
+net VBUS
+net D_P
+net D_N
+net CC1
+net CC2
 
-connect MCU.VBUS -> VBUS
-connect MCU.VCC -> VCC
-connect MCU.GND -> GND
-connect MCU.AVCC -> VCC
-connect MCU.UVCC -> VBUS
-connect MCU.UGND -> GND
-connect MCU.RESET -> VCC
-connect MCU.7 -> DPLUS_MCU
-connect MCU.8 -> DMINUS_MCU
+# -- Matrix keyboard --
+net COL0
+net COL1
+net COL2
+net COL3
+net ROW0
+net ROW1
+net ROW2
+net N_SW1
+net N_SW2
+net N_SW3
+net N_SW4
+net N_SW5
+net N_SW6
+net N_SW7
+net N_SW8
+net N_SW9
+net N_SW10
+net N_SW11
+net N_SW12
 
-connect C1.1 -> VCC
-connect C1.2 -> GND
-connect C2.1 -> VBUS
-connect C2.2 -> GND
+# USB-C: VBUS(1) GND(2) CC1(3) CC2(4) D+(5) D-(6) SBU1(7) SBU2(8) SHIELD(9)
+connect J1.1 -> VBUS
+connect J1.2 -> GND
+connect J1.3 -> CC1
+connect J1.4 -> CC2
+connect J1.5 -> D_P
+connect J1.6 -> D_N
+connect J1.9 -> GND
+connect R_CC1.1 -> CC1
+connect R_CC1.2 -> GND
+connect R_CC2.1 -> CC2
+connect R_CC2.2 -> GND
 
-place USB at (60mm, 52mm)
-place MCU at (60mm, 28mm)
-place R1 at (42mm, 40mm)
-place R2 at (78mm, 40mm)
-place C1 at (30mm, 28mm)
-place C2 at (90mm, 28mm)
+# MCU daya/USB (pakai nomor pin untuk aman; D+=7 D-=8 sesuai definisi library)
+connect U1.1 -> VCC
+connect U1.2 -> GND
+connect U1.3 -> VCC
+connect U1.4 -> GND
+connect U1.5 -> VCC
+connect U1.6 -> VBUS
+connect U1.7 -> D_P
+connect U1.8 -> D_N
+connect C_VCC.1 -> VCC
+connect C_VCC.2 -> GND
+
+# Kolom matrix ke MCU: PB4(19) PB5(20) PB6(21) PB7(22)
+connect U1.19 -> COL0
+connect U1.20 -> COL1
+connect U1.21 -> COL2
+connect U1.22 -> COL3
+
+# Baris matrix ke MCU: PD4(29) PD5(30) PD6(31)
+connect U1.29 -> ROW0
+connect U1.30 -> ROW1
+connect U1.31 -> ROW2
+
+# Matrix col2row: COL -> SW.1, SW.2 -> N_SWx -> D.A, D.K -> ROW
+connect SW1.1 -> COL0
+connect SW1.2 -> N_SW1
+connect D1.A -> N_SW1
+connect D1.K -> ROW0
+
+connect SW2.1 -> COL1
+connect SW2.2 -> N_SW2
+connect D2.A -> N_SW2
+connect D2.K -> ROW0
+
+connect SW3.1 -> COL2
+connect SW3.2 -> N_SW3
+connect D3.A -> N_SW3
+connect D3.K -> ROW0
+
+connect SW4.1 -> COL3
+connect SW4.2 -> N_SW4
+connect D4.A -> N_SW4
+connect D4.K -> ROW0
+
+connect SW5.1 -> COL0
+connect SW5.2 -> N_SW5
+connect D5.A -> N_SW5
+connect D5.K -> ROW1
+
+connect SW6.1 -> COL1
+connect SW6.2 -> N_SW6
+connect D6.A -> N_SW6
+connect D6.K -> ROW1
+
+connect SW7.1 -> COL2
+connect SW7.2 -> N_SW7
+connect D7.A -> N_SW7
+connect D7.K -> ROW1
+
+connect SW8.1 -> COL3
+connect SW8.2 -> N_SW8
+connect D8.A -> N_SW8
+connect D8.K -> ROW1
+
+connect SW9.1 -> COL0
+connect SW9.2 -> N_SW9
+connect D9.A -> N_SW9
+connect D9.K -> ROW2
+
+connect SW10.1 -> COL1
+connect SW10.2 -> N_SW10
+connect D10.A -> N_SW10
+connect D10.K -> ROW2
+
+connect SW11.1 -> COL2
+connect SW11.2 -> N_SW11
+connect D11.A -> N_SW11
+connect D11.K -> ROW2
+
+connect SW12.1 -> COL3
+connect SW12.2 -> N_SW12
+connect D12.A -> N_SW12
+connect D12.K -> ROW2
+
+# -- Tata letak (grid MX 19.05mm) --
+# Baris atas (ROW0): y=54, kolom x=22,41.05,60.1,79.15
+place SW1 at (22mm, 54mm)
+place SW2 at (41.05mm, 54mm)
+place SW3 at (60.1mm, 54mm)
+place SW4 at (79.15mm, 54mm)
+place D1 at (22mm, 47mm)
+place D2 at (41.05mm, 47mm)
+place D3 at (60.1mm, 47mm)
+place D4 at (79.15mm, 47mm)
+
+# Baris tengah (ROW1)
+place SW5 at (22mm, 34.95mm)
+place SW6 at (41.05mm, 34.95mm)
+place SW7 at (60.1mm, 34.95mm)
+place SW8 at (79.15mm, 34.95mm)
+place D5 at (22mm, 27.95mm)
+place D6 at (41.05mm, 27.95mm)
+place D7 at (60.1mm, 27.95mm)
+place D8 at (79.15mm, 27.95mm)
+
+# Baris bawah (ROW2)
+place SW9 at (22mm, 15.9mm)
+place SW10 at (41.05mm, 15.9mm)
+place SW11 at (60.1mm, 15.9mm)
+place SW12 at (79.15mm, 15.9mm)
+place D9 at (22mm, 8.9mm)
+place D10 at (41.05mm, 8.9mm)
+place D11 at (60.1mm, 8.9mm)
+place D12 at (79.15mm, 8.9mm)
+
+# Kontroler & USB (area atas)
+place J1 at (10mm, 68mm)
+place R_CC1 at (18mm, 70mm)
+place R_CC2 at (18mm, 66mm)
+place U1 at (55mm, 68mm)
+place C_VCC at (72mm, 68mm)
