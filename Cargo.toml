@@ -21,13 +21,14 @@ members = [
     "crates/papan-backend-kicad",
     "crates/papan-api",
     "crates/papan-cli",
+    "apps/papan-desktop/src-tauri",
     "tests",
 ]
 
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
-license = "MIT OR Apache-2.0"
+license = "LicenseRef-PAPAN-NonCommercial"
 authors = ["PAPAN contributors"]
 
 [workspace.dependencies]

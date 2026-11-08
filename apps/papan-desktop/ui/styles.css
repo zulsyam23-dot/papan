@@ -1,0 +1,17 @@
+:root { color-scheme: light; font-family: Segoe UI, system-ui, sans-serif; }
+body { margin: 0; background: #f6f7f9; color: #17202a; }
+header { padding: 16px 20px; background: #123; color: #fff; }
+header h1 { margin: 0; font-size: 20px; }
+main { padding: 16px 20px; display: grid; gap: 16px; }
+.panel { background: #fff; border: 1px solid #d7dde5; border-radius: 8px; padding: 12px; }
+.row { display: flex; gap: 8px; align-items: center; }
+.grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+input { flex: 1; padding: 8px; border: 1px solid #c7ced8; border-radius: 6px; }
+textarea { width: 100%; min-height: 360px; font-family: Consolas, monospace; font-size: 13px; padding: 8px; border: 1px solid #c7ced8; border-radius: 6px; box-sizing: border-box; }
+button { padding: 8px 12px; border: 0; border-radius: 6px; background: #0a66c2; color: #fff; cursor: pointer; }
+button:hover { background: #084f96; }
+pre { margin: 0; white-space: pre-wrap; font-family: Consolas, monospace; font-size: 12px; min-height: 360px; }
+.muted { color: #5b6775; font-size: 13px; }
+.error { color: #b42318; }
+.ok { color: #067647; }
+@media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
