@@ -40,11 +40,17 @@ pub struct ViaDto { pub id: String, pub net: String, pub x: f64, pub y: f64, pub
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct BoardDto { pub name: String, pub width_mm: f64, pub height_mm: f64, pub thickness_mm: f64 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct PinWorldDto { pub net: String, pub component: String, pub pin: String, pub x: f64, pub y: f64 }
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct BoardView {
     pub name: String, pub source: String, pub diagnostics: Vec<DiagnosticDto>, pub has_errors: bool,
     pub board: BoardDto, pub layers: Vec<LayerDto>, pub nets: Vec<NetDto>,
     pub components: Vec<ComponentDto>, pub traces: Vec<TraceDto>, pub vias: Vec<ViaDto>,
     pub can_edit: bool,
+    #[serde(default)] pub can_undo: bool,
+    #[serde(default)] pub can_redo: bool,
+    #[serde(default)] pub pin_world: Vec<PinWorldDto>,
 }
 
 fn mm(nm: i64) -> f64 { nm as f64 / 1_000_000.0 }
@@ -57,8 +63,14 @@ fn map_diagnostics(diagnostics: &Diagnostics) -> Vec<DiagnosticDto> {
 fn net_kind(kind: &NetKind) -> String { format!("{kind:?}").to_lowercase() }
 fn pad_shape(shape: &PadShape) -> String { match shape { PadShape::Round => "circle".to_string(), PadShape::Rect => "rect".to_string() } }
 
-fn build_board_view(name: String, source: String, ir: &PcbIr, diagnostics: &Diagnostics, can_edit: bool) -> BoardView {
+fn rotate_pt(x: f64, y: f64, deg: f64) -> (f64, f64) {
+    let r = deg.to_radians();
+    (x * r.cos() - y * r.sin(), x * r.sin() + y * r.cos())
+}
+
+fn build_board_view(name: String, source: String, ir: &PcbIr, diagnostics: &Diagnostics, can_edit: bool, can_undo: bool, can_redo: bool) -> BoardView {
     let defs: BTreeMap<_, _> = ir.definitions.iter().map(|d| (d.id.clone(), d)).collect();
+    let comp_index: BTreeMap<_, _> = ir.components.iter().map(|c| (c.id.clone(), c)).collect();
     let layers = ir.stackup.layers.iter().map(|l| LayerDto { id: l.id.to_string(), name: l.name.clone(), kind: format!("{:?}", l.kind).to_lowercase(), copper: l.kind.is_copper() }).collect();
     let nets = ir.nets.iter().map(|n| NetDto { id: n.id.to_string(), name: n.name.clone(), kind: net_kind(&n.kind), member_count: n.members.len() }).collect();
     let components = ir.components.iter().map(|c| {
@@ -74,19 +86,37 @@ fn build_board_view(name: String, source: String, ir: &PcbIr, diagnostics: &Diag
             value, x, y, rotation_deg: c.rotation.0 as f64 / 1000.0, side: format!("{:?}", c.side).to_lowercase(), placed, pads,
         }
     }).collect();
+    // resolve net member pin positions for ratsnest (world coords)
+    let mut pin_world = Vec::new();
+    for net in &ir.nets {
+        for member in &net.members {
+            if let Some(c) = comp_index.get(&member.component) {
+                if let (Some(pos), Some(def)) = (c.position, defs.get(&c.definition_id)) {
+                    let rot = c.rotation.0 as f64 / 1000.0;
+                    let (cx, cy) = (mm_len(pos.x), mm_len(pos.y));
+                    if let Some(pad) = def.footprint.pads.iter().find(|p| p.number == member.pin || p.pin == member.pin) {
+                        let (px, py) = rotate_pt(mm_len(pad.position.x), mm_len(pad.position.y), rot);
+                        pin_world.push(PinWorldDto { net: net.name.clone(), component: c.designator.clone(), pin: member.pin.clone(), x: cx + px, y: cy + py });
+                    } else {
+                        pin_world.push(PinWorldDto { net: net.name.clone(), component: c.designator.clone(), pin: member.pin.clone(), x: cx, y: cy });
+                    }
+                }
+            }
+        }
+    }
     let traces = ir.traces.iter().map(|t| TraceDto { id: t.id.to_string(), net: t.net.to_string(), layer: t.layer.to_string(), width_mm: mm_len(t.width), points: t.points.iter().copied().map(pt).collect() }).collect();
     let vias = ir.vias.iter().map(|v| ViaDto { id: v.id.to_string(), net: v.net.to_string(), x: mm_len(v.at.x), y: mm_len(v.at.y), diameter_mm: mm_len(v.diameter), drill_mm: mm_len(v.drill) }).collect();
     BoardView {
         name, source, has_errors: diagnostics.has_errors(), diagnostics: map_diagnostics(diagnostics),
         board: BoardDto { name: ir.board.name.clone(), width_mm: mm_len(ir.board.width), height_mm: mm_len(ir.board.height), thickness_mm: mm_len(ir.board.thickness) },
-        layers, nets, components, traces, vias, can_edit,
+        layers, nets, components, traces, vias, can_edit, can_undo, can_redo, pin_world,
     }
 }
 
 fn view_from_project(project: &PapanProject) -> BoardView {
     let doc = project.document();
     let source = project.source().to_string();
-    build_board_view(doc.title.clone(), source, &doc.ir, &doc.diagnostics, true)
+    build_board_view(doc.title.clone(), source, &doc.ir, &doc.diagnostics, true, project.can_undo(), project.can_redo())
 }
 
 #[tauri::command]
@@ -119,7 +149,31 @@ fn new_project(name: String, width_mm: f64, height_mm: f64, layers: u32, state: 
 #[tauri::command]
 fn check_source(source: String) -> Result<BoardView, String> {
     let doc = PapanDocument::from_source(&source);
-    Ok(build_board_view(doc.title.clone(), source, &doc.ir, &doc.diagnostics, false))
+    Ok(build_board_view(doc.title.clone(), source, &doc.ir, &doc.diagnostics, false, false, false))
+}
+
+#[tauri::command]
+fn undo(state: State<'_, AppState>) -> Result<BoardView, String> {
+    let mut guard = state.project.lock().map_err(|_| "state lock poisoned")?;
+    let project = guard.as_mut().ok_or("Belum ada proyek.")?;
+    if !project.undo() { return Err("Tidak ada yang bisa di-undo.".to_string()); }
+    Ok(view_from_project(project))
+}
+
+#[tauri::command]
+fn redo(state: State<'_, AppState>) -> Result<BoardView, String> {
+    let mut guard = state.project.lock().map_err(|_| "state lock poisoned")?;
+    let project = guard.as_mut().ok_or("Belum ada proyek.")?;
+    if !project.redo() { return Err("Tidak ada yang bisa di-redo.".to_string()); }
+    Ok(view_from_project(project))
+}
+
+#[tauri::command]
+fn save_source(path: String, state: State<'_, AppState>) -> Result<String, String> {
+    let guard = state.project.lock().map_err(|_| "state lock poisoned")?;
+    let project = guard.as_ref().ok_or("Belum ada proyek.")?;
+    project.save_source(&path).map_err(|e| e.to_string())?;
+    Ok(path)
 }
 
 #[tauri::command]
@@ -150,10 +204,11 @@ fn component_info(project: &PapanProject, designator: &str) -> Option<(f64, bool
 }
 
 #[tauri::command]
-fn move_component_to(designator: String, x_mm: f64, y_mm: f64, state: State<'_, AppState>) -> Result<BoardView, String> {
+fn move_component_to(designator: String, x_mm: f64, y_mm: f64, rotation_deg: Option<f64>, state: State<'_, AppState>) -> Result<BoardView, String> {
     let mut guard = state.project.lock().map_err(|_| "state lock poisoned")?;
     let project = guard.as_mut().ok_or("Belum ada proyek. Buka atau buat proyek dulu.")?;
-    let (rot, _) = component_info(project, &designator).unwrap_or((0.0, true));
+    let (cur_rot, _) = component_info(project, &designator).unwrap_or((0.0, true));
+    let rot = rotation_deg.unwrap_or(cur_rot);
     let result = (|| -> Result<(), String> {
         let mut board = project.board();
         let cref = board.component(&designator).ok_or_else(|| format!("Komponen '{designator}' tidak ditemukan"))?;
@@ -214,7 +269,8 @@ pub fn run() {
         .manage(AppState::default())
         .invoke_handler(tauri::generate_handler![
             app_info, open_project, new_project, check_source, get_view,
-            add_component_at, move_component_to, rotate_component, delete_component, flip_component
+            add_component_at, move_component_to, rotate_component, delete_component, flip_component,
+            undo, redo, save_source
         ])
         .run(tauri::generate_context!())
         .expect("error while running PAPAN desktop");

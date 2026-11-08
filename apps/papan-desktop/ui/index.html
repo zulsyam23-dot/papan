@@ -13,6 +13,9 @@
         <button id="new-btn" class="primary">＋ Proyek Baru</button>
         <input id="project-path" placeholder="Path proyek (contoh: examples\ujicoba)" />
         <button id="open-btn">Buka</button>
+        <button id="save-btn" title="Simpan source .pn (Ctrl+S)">Simpan</button>
+        <button id="undo-btn" title="Undo (Ctrl+Z)">↶ Undo</button>
+        <button id="redo-btn" title="Redo (Ctrl+Y)">↷ Redo</button>
         <button id="fit-btn" title="Home: Zoom Pas">Zoom Pas</button>
         <button id="help-btn" title="Pintasan (? / F1)">?</button>
         <span id="coords" class="coords">X: -- mm  Y: -- mm</span>
@@ -59,6 +62,7 @@
             <button class="part" data-part="diode"><div class="icon">D</div><div>Dioda</div></button>
           </div>
           <label class="snap"><input id="snap" type="checkbox" checked /> Snap grid 1 mm</label>
+          <label class="snap"><input id="ratsnest" type="checkbox" checked /> Tampilkan ratsnest (panduan koneksi)</label>
           <hr/>
           <h3>Ringkasan</h3>
           <div id="summary" class="info"></div>
@@ -108,7 +112,10 @@
           <div><kbd>R</kbd></div><div>Rotasi komponen terpilih +90° (Shift+R = -90°)</div>
           <div><kbd>F</kbd></div><div>Flip komponen terpilih (F.Cu ↔ B.Cu)</div>
           <div><kbd>Del</kbd></div><div>Hapus komponen terpilih</div>
+          <div><kbd>R</kbd> saat geser</div><div>Putar komponen yang sedang digeser (+90°)</div>
           <div><kbd>Esc</kbd></div><div>Batal alat/operasi, hapus seleksi mode taruh</div>
+          <div><kbd>Ctrl+Z</kbd> / <kbd>Ctrl+Y</kbd></div><div>Undo / Redo</div>
+          <div><kbd>Ctrl+S</kbd></div><div>Simpan source .pn</div>
           <div><kbd>Home</kbd></div><div>Zoom pas (fit board)</div>
           <div><kbd>+</kbd> / <kbd>-</kbd></div><div>Zoom in / out</div>
           <div><kbd>←↑↓→</kbd></div><div>Geser komponen terpilih (snap grid; Shift = 0.1 mm)</div>

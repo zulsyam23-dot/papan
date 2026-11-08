@@ -3,6 +3,7 @@ let currentView = null;
 let pan = { x: 30, y: 30 }, zoom = 5;
 let panning = null, moving = null, activePart = null, raf = 0, pendingPt = null;
 let selectedDesignator = null, showHelp = false;
+let mouseBoardPt = null, currentPath = null;
 
 const $ = id => document.getElementById(id);
 const layerColors = { 'f.cu': '#d94f4f', 'b.cu': '#4f7fd9', 'in1.cu': '#d9b84f', 'in2.cu': '#4fd99a' };
@@ -25,6 +26,13 @@ function clampToBoard(pt) {
 }
 function setCoords(pt) {
   $('coords').textContent = pt ? `X: ${pt.x.toFixed(2)} mm  Y: ${pt.y.toFixed(2)} mm` : 'X: -- mm  Y: -- mm';
+}
+function rotPt(x,y,deg){ const r=deg*Math.PI/180; return [x*Math.cos(r)-y*Math.sin(r), x*Math.sin(r)+y*Math.cos(r)]; }
+function ratsnestOn(){ return $('ratsnest')?.checked; }
+function ghostPads(part){
+  if (!currentView) return [];
+  const c = (currentView.components||[]).find(x => (x.part||'').toLowerCase()===String(part).toLowerCase() && x.pads && x.pads.length);
+  return c ? c.pads : [];
 }
 function fitView() {
   const svg = $('board-canvas'), r = svg.getBoundingClientRect(), b = currentView?.board;
@@ -51,6 +59,18 @@ function render() {
   out += `<rect x="0" y="0" width="${b.width_mm}" height="${b.height_mm}" rx="0.4" fill="#132713" fill-opacity="0.95" stroke="#d4a24c" stroke-width="${1.4/zoom}"/>`;
   out += `<line x1="0" y1="0" x2="0" y2="${Math.min(5,b.height_mm)}" stroke="#d4a24c" stroke-width="${1/zoom}" opacity="0.6"/>`;
   out += `<line x1="0" y1="0" x2="${Math.min(5,b.width_mm)}" y2="0" stroke="#d4a24c" stroke-width="${1/zoom}" opacity="0.6"/>`;
+  // ratsnest (airwires) - guidance, under traces
+  if (ratsnestOn() && currentView.pin_world && currentView.pin_world.length) {
+    const groups = {};
+    for (const p of currentView.pin_world) (groups[p.net]||(groups[p.net]=[])).push(p);
+    let rn = `<g opacity="0.55" stroke="#7fc8ff" fill="none" stroke-width="${Math.max(0.18, 0.9/zoom)}" stroke-dasharray="${1.2/zoom} ${0.8/zoom}">`;
+    for (const pins of Object.values(groups)) {
+      if (pins.length < 2) continue;
+      const a = pins[0];
+      for (let i=1;i<pins.length;i++) rn += `<line x1="${a.x}" y1="${a.y}" x2="${pins[i].x}" y2="${pins[i].y}"/>`;
+    }
+    out += rn + `</g>`;
+  }
   for (const t of (currentView.traces||[])) {
     if (!t.points || t.points.length < 2) continue;
     const l = layerById[t.layer], color = l ? layerColor(l.name,l.copper) : '#59a869';
@@ -59,6 +79,19 @@ function render() {
   for (const v of (currentView.vias||[])) {
     out += `<circle cx="${v.x}" cy="${v.y}" r="${Math.max(v.diameter_mm/2,0.25)}" fill="#c8d0da" stroke="#fff" stroke-width="${0.06/zoom}"/>`;
     out += `<circle cx="${v.x}" cy="${v.y}" r="${Math.max(v.drill_mm/2,0.12)}" fill="#0b1219"/>`;
+  }
+  // ghost preview while placing
+  if (activePart && mouseBoardPt) {
+    const gp = mouseBoardPt, pads = ghostPads(activePart);
+    out += `<g transform="translate(${gp.x},${gp.y})" opacity="0.65">`;
+    out += `<line x1="-3" y1="0" x2="3" y2="0" stroke="#6cb6ff" stroke-width="${1/zoom}"/>`;
+    out += `<line x1="0" y1="-3" x2="0" y2="3" stroke="#6cb6ff" stroke-width="${1/zoom}"/>`;
+    for (const p of pads) {
+      if (p.shape === 'circle') out += `<circle cx="${p.x}" cy="${p.y}" r="${Math.max(p.w,p.h)/2}" fill="#6cb6ff" fill-opacity="0.25" stroke="#6cb6ff" stroke-width="${0.08/zoom}"/>`;
+      else out += `<rect x="${p.x-p.w/2}" y="${p.y-p.h/2}" width="${p.w}" height="${p.h}" rx="${Math.min(p.w,p.h)*0.12}" fill="#6cb6ff" fill-opacity="0.25" stroke="#6cb6ff" stroke-width="${0.08/zoom}"/>`;
+    }
+    out += `<text x="1.2" y="1.8" font-size="1.4" fill="#9fd0ff" font-family="Segoe UI, sans-serif" transform="scale(1,-1)">${esc(activePart)}</text>`;
+    out += `</g>`;
   }
   for (const c of (currentView.components||[])) {
     if (!c.placed) continue;
@@ -115,11 +148,15 @@ function zoomBy(factor, cx, cy) {
   zoom = Math.max(0.15, Math.min(120, zoom*factor));
   render();
 }
+function syncHistoryButtons() {
+  if ($('undo-btn')) $('undo-btn').disabled = !currentView?.can_undo;
+  if ($('redo-btn')) $('redo-btn').disabled = !currentView?.can_redo;
+}
 async function applyView(view, keepViewport = true) {
   const had = !!currentView;
   currentView = view;
   if (selectedDesignator && !(currentView.components||[]).some(c => c.designator === selectedDesignator)) selectedDesignator = null;
-  renderInfo();
+  renderInfo(); syncHistoryButtons();
   if (!had || !keepViewport) fitView();
   render();
 }
@@ -206,9 +243,9 @@ async function doFlip() {
 function startMoveSelected() {
   const c = selectedComponent();
   if (!c || !currentView?.can_edit) { setStatus('Pilih komponen dulu (klik di papan), lalu klik Geser atau tekan M.', 'err'); return; }
-  moving = { designator: c.designator, component: c, ox: c.x, oy: c.y, sx: 0, sy: 0, dragging: true, keyboard: true };
+  moving = { designator: c.designator, component: c, ox: c.x, oy: c.y, orot: c.rotation_deg||0, sx: 0, sy: 0, dragging: true, keyboard: true };
   $('board-canvas').style.cursor='grabbing';
-  setStatus(`Geser ${c.designator}: gerakkan mouse, klik kiri = tempat, kanan/Esc = batal.`);
+  setStatus(`Geser ${c.designator}: gerak mouse, klik kiri tempat, R putar, kanan/Esc batal.`);
   syncToolButtons(); render();
 }
 async function nudgeSelected(dx, dy) {
@@ -217,7 +254,18 @@ async function nudgeSelected(dx, dy) {
   const step = snapOn() ? 1 : 0.1;
   const x = Math.max(0, Math.min(currentView.board.width_mm, snap(c.x + dx*step)));
   const y = Math.max(0, Math.min(currentView.board.height_mm, snap(c.y + dy*step)));
-  try { applyView(await call('move_component_to', { designator: c.designator, xMm: x, yMm: y })); setSelected(c.designator); } catch(_) {}
+  try { applyView(await call('move_component_to', { designator: c.designator, xMm: x, yMm: y, rotationDeg: c.rotation_deg||0 })); setSelected(c.designator); } catch(_) {}
+}
+async function doUndo(){ if(!currentView?.can_edit) return; try{ applyView(await call('undo',{})); setStatus('Undo.','ok'); }catch(e){} }
+async function doRedo(){ if(!currentView?.can_edit) return; try{ applyView(await call('redo',{})); setStatus('Redo.','ok'); }catch(e){} }
+async function doSave(){
+  if(!currentView?.can_edit){ setStatus('Tidak ada proyek edit yang bisa disimpan.','err'); return; }
+  let p = currentPath || '';
+  if (p && !p.toLowerCase().endsWith('.pn') && !p.toLowerCase().endsWith('.papan') && !p.toLowerCase().endsWith('.graph')) p = p.replace(/[\\\/]+$/,'') + '\\board.pn';
+  if (!p || !p.toLowerCase().endsWith('.pn')) p = 'C:\\Users\\PC\\Documents\\papan\\board.pn';
+  const chosen = window.prompt('Simpan source PAPAN ke path (.pn):', p);
+  if (!chosen) return;
+  try { await call('save_source', { path: chosen }); currentPath = chosen; $('project-path').value = chosen; setStatus(`Tersimpan: ${chosen}`,'ok'); } catch(e){}
 }
 
 function setupCanvas() {
@@ -252,7 +300,7 @@ function setupCanvas() {
     const c = currentView.can_edit ? findComponentAt(bp) : null;
     if (c) {
       setSelected(c.designator);
-      moving = { designator: c.designator, component: c, ox: c.x, oy: c.y, sx: e.clientX, sy: e.clientY, dragging: false, keyboard: false };
+      moving = { designator: c.designator, component: c, ox: c.x, oy: c.y, orot: c.rotation_deg||0, sx: e.clientX, sy: e.clientY, dragging: false, keyboard: false };
       svg.style.cursor='grab';
     } else {
       setSelected(null);
@@ -260,46 +308,62 @@ function setupCanvas() {
   });
 
   window.addEventListener('mousemove', e => {
-    const bp = boardPoint(e.clientX, e.clientY); setCoords(bp ? clampToBoard(bp) : null);
+    const bp = boardPoint(e.clientX, e.clientY);
+    const cp = bp ? clampToBoard(bp) : null;
+    setCoords(cp);
+    const prev = mouseBoardPt; mouseBoardPt = cp;
     if (moving) {
       if (!moving.dragging && !moving.keyboard) {
         if (Math.hypot(e.clientX - moving.sx, e.clientY - moving.sy) > 4) { moving.dragging = true; svg.style.cursor='grabbing'; }
         else return;
       }
-      if (bp) { const p = clampToBoard(bp); moving.component.x = p.x; moving.component.y = p.y; pendingPt = p; scheduleRender(); }
+      if (cp) { moving.component.x = cp.x; moving.component.y = cp.y; pendingPt = cp; scheduleRender(); }
       return;
     }
-    if (panning) { pan.x = e.clientX-panning.x; pan.y = e.clientY-panning.y; render(); }
+    if (panning) { pan.x = e.clientX-panning.x; pan.y = e.clientY-panning.y; render(); return; }
+    if (activePart && cp && (!prev || prev.x!==cp.x || prev.y!==cp.y)) scheduleRender();
   });
 
   window.addEventListener('mouseup', async e => {
     if (panning && e.button === panning.btn) { panning=null; svg.style.cursor = activePart?'copy':'crosshair'; return; }
     if (moving && e.button === 0) {
-      const d = moving.designator, comp = moving.component, ox=moving.ox, oy=moving.oy;
+      const d = moving.designator, comp = moving.component, ox=moving.ox, oy=moving.oy, orot=moving.orot;
       const didDrag = moving.dragging || moving.keyboard;
       const p = pendingPt || clampToBoard(boardPoint(e.clientX,e.clientY));
-      moving=null; pendingPt=null; svg.style.cursor = activePart?'copy':'crosshair';
+      const rot = (comp.rotation_deg ?? orot ?? 0);
+      moving=null; pendingPt=null; svg.style.cursor = activePart?'copy':'crosshair'; syncToolButtons();
       if (!didDrag) { setSelected(d); render(); setStatus(`${d} dipilih. (M/G=geser, R=rotasi, F=flip, Del=hapus, panah=nudge)`); return; }
-      if (p && (Math.abs(p.x-ox)>0.001 || Math.abs(p.y-oy)>0.001)) {
-        try { applyView(await call('move_component_to', { designator: d, xMm: p.x, yMm: p.y })); setSelected(d); setStatus(`${d} → (${p.x.toFixed(1)}, ${p.y.toFixed(1)}) mm`, 'ok'); }
-        catch(_) { comp.x=ox; comp.y=oy; render(); }
-      } else { comp.x=ox; comp.y=oy; setSelected(d); render(); setStatus('Posisi tidak berubah.'); }
+      if (p) {
+        try { applyView(await call('move_component_to', { designator: d, xMm: p.x, yMm: p.y, rotationDeg: rot })); setSelected(d); setStatus(`${d} → (${p.x.toFixed(1)}, ${p.y.toFixed(1)}) mm ${Math.round(rot)}°`, 'ok'); }
+        catch(_) { comp.x=ox; comp.y=oy; comp.rotation_deg=orot; render(); }
+      } else { comp.x=ox; comp.y=oy; comp.rotation_deg=orot; setSelected(d); render(); }
     }
   });
 
   window.addEventListener('keydown', async e => {
     if (showHelp && (e.key==='Escape' || e.key==='?' || e.key==='F1')) { e.preventDefault(); toggleHelp(false); return; }
+    // Ctrl combos (project-level)
+    if (e.ctrlKey && !e.shiftKey && (e.key==='z' || e.key==='Z')) { e.preventDefault(); if (!isTypingTarget(e.target)) await doUndo(); return; }
+    if ((e.ctrlKey && (e.key==='y' || e.key==='Y')) || (e.ctrlKey && e.shiftKey && (e.key==='z' || e.key==='Z'))) { e.preventDefault(); if (!isTypingTarget(e.target)) await doRedo(); return; }
+    if (e.ctrlKey && (e.key==='s' || e.key==='S')) { e.preventDefault(); await doSave(); return; }
     if (isTypingTarget(e.target)) return;
     const k = e.key;
     if (k==='?' || k==='F1') { e.preventDefault(); toggleHelp(); return; }
-    if (k==='Escape') { if (moving && currentView) { moving.component.x=moving.ox; moving.component.y=moving.oy; moving=null; pendingPt=null; render(); } setActivePart(null); setStatus('Batal.'); return; }
+    if (k==='Escape') {
+      if (moving && currentView) { moving.component.x=moving.ox; moving.component.y=moving.oy; moving.component.rotation_deg=moving.orot; moving=null; pendingPt=null; render(); }
+      setActivePart(null); syncToolButtons(); setStatus('Batal.'); return;
+    }
     if (!currentView) return;
     if (k==='Home') { e.preventDefault(); fitView(); render(); return; }
     if (k==='+' || k==='=') { e.preventDefault(); zoomBy(1.15); return; }
     if (k==='-' || k==='_') { e.preventDefault(); zoomBy(1/1.15); return; }
     if (k==='a' || k==='A') { e.preventDefault(); activateAddMode(); return; }
     if (k==='m' || k==='M' || k==='g' || k==='G') { e.preventDefault(); startMoveSelected(); return; }
-    if (k==='r' || k==='R') { e.preventDefault(); await doRotate(e.shiftKey ? -90 : 90); return; }
+    if (k==='r' || k==='R') {
+      e.preventDefault();
+      if (moving) { moving.component.rotation_deg = ((Math.round(moving.component.rotation_deg||0) + (e.shiftKey?-90:90))%360+360)%360; scheduleRender(); setStatus(`Putar ${moving.designator} → ${moving.component.rotation_deg}° (klik untuk tempat)`); return; }
+      await doRotate(e.shiftKey ? -90 : 90); return;
+    }
     if (k==='f' || k==='F') { e.preventDefault(); await doFlip(); return; }
     if (k==='Delete' || k==='Backspace') { e.preventDefault(); await doDelete(); return; }
     if (k==='ArrowLeft') { e.preventDefault(); await nudgeSelected(e.shiftKey?-0.1:-1, 0); return; }
@@ -326,14 +390,18 @@ function setupModal() {
   const modal = $('modal');
   $('new-btn').onclick = $('welcome-new').onclick = () => modal.classList.remove('hidden');
   $('new-cancel').onclick = () => modal.classList.add('hidden');
-  $('new-ok').onclick = async () => { modal.classList.add('hidden'); try { applyView(await call('new_project', { name: $('new-name').value||'Papan Baru', widthMm: +$('new-w').value||80, heightMm: +$('new-h').value||50, layers: Math.max(1, +$('new-l').value||2) })); setActivePart(null);} catch(_) {} };
+  $('new-ok').onclick = async () => { modal.classList.add('hidden'); try { applyView(await call('new_project', { name: $('new-name').value||'Papan Baru', widthMm: +$('new-w').value||80, heightMm: +$('new-h').value||50, layers: Math.max(1, +$('new-l').value||2) })); currentPath=null; setActivePart(null);} catch(_) {} };
 }
 
 async function init() {
   if (!invoke) { setStatus('Tauri API tidak tersedia.', 'err'); return; }
   setupPalette(); setupCanvas(); setupModal();
-  $('open-btn').onclick = async () => { const p=$('project-path').value.trim(); if(p) try{ applyView(await call('open_project',{path:p})); setActivePart(null);}catch(_){} };
-  $('welcome-open').onclick = async () => { const p=$('welcome-path').value.trim(); if(p){ $('project-path').value=p; try{ applyView(await call('open_project',{path:p})); setActivePart(null);}catch(_){} } };
+  $('open-btn').onclick = async () => { const p=$('project-path').value.trim(); if(p) try{ applyView(await call('open_project',{path:p})); currentPath=p; setActivePart(null);}catch(_){} };
+  $('welcome-open').onclick = async () => { const p=$('welcome-path').value.trim(); if(p){ $('project-path').value=p; try{ applyView(await call('open_project',{path:p})); currentPath=p; setActivePart(null);}catch(_){} } };
+  $('save-btn') && ($('save-btn').onclick = () => doSave());
+  $('undo-btn') && ($('undo-btn').onclick = () => doUndo());
+  $('redo-btn') && ($('redo-btn').onclick = () => doRedo());
+  $('ratsnest') && ($('ratsnest').onchange = () => render());
   $('check-btn').onclick = async () => { try{ applyView(await call('check_source',{source:$('source').value})); }catch(_){} };
   $('fit-btn').onclick = () => { if(currentView){ fitView(); render(); } };
   $('help-btn').onclick = () => toggleHelp();
@@ -347,7 +415,7 @@ async function init() {
   $('tool-fit') && ($('tool-fit').onclick = () => { if(currentView){ fitView(); render(); } });
   $('tool-help') && ($('tool-help').onclick = () => toggleHelp());
   $('welcome-path').value = String.raw`C:\Users\PC\Documents\papan\examples\ujicoba`;
-  setActivePart(null);
-  setStatus('Siap. Klik tombol Alat atau pakai pintasan (?). Pilih komponen lalu taruh di papan.', 'ok');
+  setActivePart(null); syncHistoryButtons();
+  setStatus('Siap. Klik tombol Alat atau pintasan (?). Ghost+ratusnest aktif, Ctrl+Z/Y undo/redo.', 'ok');
 }
 init();
