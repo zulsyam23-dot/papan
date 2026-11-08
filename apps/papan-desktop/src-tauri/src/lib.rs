@@ -127,7 +127,7 @@ fn open_project(path: String, state: State<'_, AppState>) -> Result<BoardView, S
     let mut project = PapanProject::open(&path).map_err(|e| e.to_string())?;
     // Auto-route when nets exist but no traces yet, so projects open with visible routing.
     if !project.ir().nets.is_empty() && project.ir().traces.is_empty() {
-        let _ = project.autoroute();
+        let _ = project.board().autoroute();
     }
     let view = view_from_project(&project);
     *state.project.lock().map_err(|_| "state lock poisoned")? = Some(project);
@@ -184,7 +184,7 @@ fn save_source(path: String, state: State<'_, AppState>) -> Result<String, Strin
 fn autoroute(state: State<'_, AppState>) -> Result<BoardView, String> {
     let mut guard = state.project.lock().map_err(|_| "state lock poisoned")?;
     let project = guard.as_mut().ok_or("Belum ada proyek.")?;
-    project.autoroute().map_err(|e| e.to_string())?;
+    project.board().autoroute().map_err(|e| e.to_string())?;
     Ok(view_from_project(project))
 }
 
