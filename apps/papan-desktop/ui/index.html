@@ -1,56 +1,86 @@
 <!doctype html>
-<html lang="en">
+<html lang="id">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>PAPAN</title>
+    <title>PAPAN PCB</title>
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
     <div class="app">
-      <header class="toolbar">
-        <div class="brand">PAPAN <span class="sub">PCB Editor</span></div>
-        <input id="project-path" class="path" placeholder="Project path (folder / .papan / .pn)" />
-        <button id="open-btn">Open</button>
-        <button id="check-btn">Check Source</button>
-        <button id="fit-btn">Zoom Fit</button>
-        <span id="app-info" class="muted"></span>
+      <header class="topbar">
+        <div class="brand"><strong>PAPAN</strong> <span>Desain PCB</span></div>
+        <button id="new-btn" class="primary">＋ Buat Proyek Baru</button>
+        <input id="project-path" placeholder="Path proyek/folder .papan (untuk buka)" />
+        <button id="open-btn">Buka</button>
+        <button id="fit-btn">Zoom Pas</button>
+        <span id="status" class="status">Siap</span>
       </header>
-      <div class="workspace">
-        <aside class="sidebar">
-          <section>
-            <h3>Board</h3>
-            <div id="board-info" class="info muted">No project loaded.</div>
-          </section>
-          <section>
-            <h3>Layers</h3>
-            <div id="layers" class="list"></div>
-          </section>
-          <section>
-            <h3>Nets</h3>
-            <div id="nets" class="list"></div>
-          </section>
-          <section>
-            <h3>Components</h3>
-            <div id="components" class="list"></div>
-          </section>
-        </aside>
-        <main class="center">
-          <div class="canvas-wrap">
-            <svg id="board-canvas" xmlns="http://www.w3.org/2000/svg"></svg>
-            <div id="canvas-hint" class="hint">Open proyek PAPAN atau tulis source, lalu Open/Check.</div>
+
+      <div id="welcome" class="welcome">
+        <div class="card">
+          <h2>Mulai desain PCB</h2>
+          <p>Pilih salah satu cara:</p>
+          <div class="actions">
+            <button id="welcome-new" class="primary big">＋ Buat Proyek Baru</button>
           </div>
-          <section class="bottom">
-            <div class="bottom-tabs"><strong>Diagnostics</strong> <span id="diag-summary" class="muted"></span></div>
-            <pre id="diagnostics"></pre>
-          </section>
-        </main>
-        <aside class="right">
-          <section>
-            <h3>Source</h3>
-            <textarea id="source" spellcheck="false" placeholder="; PAPAN source (.pn)"></textarea>
-          </section>
+          <div class="row">
+            <input id="welcome-path" placeholder="Contoh: C:\Users\PC\Documents\papan\examples\ujicoba" />
+            <button id="welcome-open">Buka Proyek</button>
+          </div>
+          <p class="muted">Tips: coba buka contoh uji coba di <code>examples\ujicoba</code>.</p>
+        </div>
+      </div>
+
+      <div id="workspace" class="workspace hidden">
+        <aside class="palette">
+          <h3>Komponen</h3>
+          <p class="help">Tarik komponen ke area papan.</p>
+          <div class="parts">
+            <div class="part" draggable="true" data-part="resistor"><div class="icon">R</div><div>Resistor</div></div>
+            <div class="part" draggable="true" data-part="capacitor"><div class="icon">C</div><div>Kapasitor</div></div>
+            <div class="part" draggable="true" data-part="led"><div class="icon">LED</div><div>LED</div></div>
+            <div class="part" draggable="true" data-part="diode"><div class="icon">D</div><div>Dioda</div></div>
+          </div>
+          <div class="note muted">Setelah ditaruh, komponen bisa <strong>digeser</strong> dengan drag di papan.</div>
+          <hr/>
+          <h3>Ringkasan</h3>
+          <div id="summary" class="info"></div>
         </aside>
+
+        <main class="center">
+          <div class="canvas-wrap" id="drop-zone">
+            <svg id="board-canvas" xmlns="http://www.w3.org/2000/svg"></svg>
+            <div id="drop-hint" class="drop-hint hidden">Lepaskan untuk menaruh komponen</div>
+          </div>
+          <div class="diagbar"><strong>Status:</strong> <span id="diag-text" class="muted">-</span></div>
+        </main>
+
+        <aside class="side">
+          <details open>
+            <summary>Nets & Komponen</summary>
+            <div id="lists" class="info"></div>
+          </details>
+          <details>
+            <summary>Source PAPAN (.pn)</summary>
+            <textarea id="source" spellcheck="false"></textarea>
+            <button id="check-btn">Check Source</button>
+          </details>
+          <details>
+            <summary>Diagnostik detail</summary>
+            <pre id="diagnostics"></pre>
+          </details>
+        </aside>
+      </div>
+    </div>
+    <div id="modal" class="modal hidden">
+      <div class="modal-card">
+        <h3>Proyek Baru</h3>
+        <label>Nama <input id="new-name" value="Papan Baru" /></label>
+        <label>Lebar (mm) <input id="new-w" type="number" value="80" /></label>
+        <label>Tinggi (mm) <input id="new-h" type="number" value="50" /></label>
+        <label>Layer tembaga <input id="new-l" type="number" value="2" min="1" max="8" /></label>
+        <div class="actions"><button id="new-cancel">Batal</button><button id="new-ok" class="primary">Buat</button></div>
       </div>
     </div>
     <script src="main.js"></script>
