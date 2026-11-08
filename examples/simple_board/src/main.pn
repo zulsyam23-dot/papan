@@ -1,0 +1,23 @@
+board "Simple Board"
+
+size 60mm x 40mm
+thickness 1.6mm
+layers 2
+
+component R1: resistor {
+    value: 10kΩ
+}
+component R2: resistor {
+    value: 10kΩ
+}
+
+net N1
+net N2
+
+connect R1.1 -> N1
+connect R2.1 -> N1
+connect R1.2 -> N2
+connect R2.2 -> N2
+
+place R1 at (15mm, 12mm)
+place R2 at (45mm, 28mm)

@@ -1,0 +1,18 @@
+/target/
+**/*.rs.bk
+Cargo.lock.tmp
+.DS_Store
+Thumbs.db
+
+# Generated example/build outputs
+/examples/*/output/
+/examples/*/nodes/
+/examples/*/cache/
+
+# Local IDE/tooling
+/.idea/
+/.vscode/
+/.qodo/
+
+# Temporary test artifacts
+/target/tmp_*.pn

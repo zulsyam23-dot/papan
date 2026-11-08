@@ -1,0 +1,12 @@
+[package]
+name = "papan-ir-verifier"
+description = "PAPAN PCB IR structural verifier"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+papan-types.workspace = true
+papan-ir.workspace = true
+papan-geometry.workspace = true

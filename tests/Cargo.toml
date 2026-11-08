@@ -1,0 +1,77 @@
+[package]
+name = "papan-integration-tests"
+description = "Cross-crate integration tests for the PAPAN toolchain"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+publish = false
+
+[lib]
+path = "src/lib.rs"
+
+[[test]]
+name = "parser"
+path = "parser.rs"
+
+[[test]]
+name = "semantic"
+path = "semantic.rs"
+
+[[test]]
+name = "ir"
+path = "ir.rs"
+
+[[test]]
+name = "nodes"
+path = "nodes.rs"
+
+[[test]]
+name = "geometry"
+path = "geometry.rs"
+
+[[test]]
+name = "electrical"
+path = "electrical.rs"
+
+[[test]]
+name = "routing"
+path = "routing.rs"
+
+[[test]]
+name = "drc"
+path = "drc.rs"
+
+[[test]]
+name = "erc"
+path = "erc.rs"
+
+[[test]]
+name = "manufacturing"
+path = "manufacturing.rs"
+
+[[test]]
+name = "end_to_end"
+path = "end_to_end.rs"
+
+[dependencies]
+papan-types.workspace = true
+papan-lexer.workspace = true
+papan-ast.workspace = true
+papan-parser.workspace = true
+papan-geometry.workspace = true
+papan-ir.workspace = true
+papan-ir-verifier.workspace = true
+papan-library.workspace = true
+papan-placement.workspace = true
+papan-semantic.workspace = true
+papan-electrical.workspace = true
+papan-routing.workspace = true
+papan-drc.workspace = true
+papan-manufacturing.workspace = true
+papan-graph.workspace = true
+papan-document.workspace = true
+papan-backend.workspace = true
+papan-backend-kicad.workspace = true
+papan-api.workspace = true
+serde_json.workspace = true

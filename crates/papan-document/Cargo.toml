@@ -1,0 +1,19 @@
+[package]
+name = "papan-document"
+description = "PAPAN document model, transactions and text projection"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+papan-types.workspace = true
+papan-parser.workspace = true
+papan-semantic.workspace = true
+papan-library.workspace = true
+papan-ir.workspace = true
+papan-ir-verifier.workspace = true
+papan-graph.workspace = true
+papan-geometry.workspace = true
+serde.workspace = true
+serde_json.workspace = true

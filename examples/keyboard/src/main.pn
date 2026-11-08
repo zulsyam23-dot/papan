@@ -1,0 +1,57 @@
+board "Mechanical Keyboard Demo"
+
+size 120mm x 60mm
+thickness 1.6mm
+layers 2
+
+component MCU: "ATmega32U4"
+component USB: "USB-C"
+component R1: resistor { value: 22Ω }
+component R2: resistor { value: 22Ω }
+component C1: capacitor { value: 100nF }
+component C2: capacitor { value: 10uF }
+
+net VBUS { type: power voltage: 5V }
+net VCC { type: power voltage: 5V }
+net GND { type: ground }
+net DPLUS_USB
+net DPLUS_MCU
+net DMINUS_USB
+net DMINUS_MCU
+
+connect USB.VBUS -> VBUS
+connect USB.GND -> GND
+connect USB.5 -> DPLUS_USB
+connect USB.6 -> DMINUS_USB
+connect USB.CC1 -> GND
+connect USB.CC2 -> GND
+connect USB.SBU1 -> GND
+connect USB.SBU2 -> GND
+connect USB.SHIELD -> GND
+
+connect R1.1 -> DPLUS_USB
+connect R1.2 -> DPLUS_MCU
+connect R2.1 -> DMINUS_USB
+connect R2.2 -> DMINUS_MCU
+
+connect MCU.VBUS -> VBUS
+connect MCU.VCC -> VCC
+connect MCU.GND -> GND
+connect MCU.AVCC -> VCC
+connect MCU.UVCC -> VBUS
+connect MCU.UGND -> GND
+connect MCU.RESET -> VCC
+connect MCU.7 -> DPLUS_MCU
+connect MCU.8 -> DMINUS_MCU
+
+connect C1.1 -> VCC
+connect C1.2 -> GND
+connect C2.1 -> VBUS
+connect C2.2 -> GND
+
+place USB at (60mm, 52mm)
+place MCU at (60mm, 28mm)
+place R1 at (42mm, 40mm)
+place R2 at (78mm, 40mm)
+place C1 at (30mm, 28mm)
+place C2 at (90mm, 28mm)

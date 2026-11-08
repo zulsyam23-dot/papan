@@ -1,0 +1,60 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/papan-types",
+    "crates/papan-lexer",
+    "crates/papan-ast",
+    "crates/papan-parser",
+    "crates/papan-geometry",
+    "crates/papan-ir",
+    "crates/papan-ir-verifier",
+    "crates/papan-library",
+    "crates/papan-placement",
+    "crates/papan-semantic",
+    "crates/papan-electrical",
+    "crates/papan-routing",
+    "crates/papan-drc",
+    "crates/papan-manufacturing",
+    "crates/papan-graph",
+    "crates/papan-document",
+    "crates/papan-backend",
+    "crates/papan-backend-kicad",
+    "crates/papan-api",
+    "crates/papan-cli",
+    "tests",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+authors = ["PAPAN contributors"]
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+papan-types = { path = "crates/papan-types" }
+papan-lexer = { path = "crates/papan-lexer" }
+papan-ast = { path = "crates/papan-ast" }
+papan-parser = { path = "crates/papan-parser" }
+papan-geometry = { path = "crates/papan-geometry" }
+papan-ir = { path = "crates/papan-ir" }
+papan-ir-verifier = { path = "crates/papan-ir-verifier" }
+papan-library = { path = "crates/papan-library" }
+papan-placement = { path = "crates/papan-placement" }
+papan-semantic = { path = "crates/papan-semantic" }
+papan-electrical = { path = "crates/papan-electrical" }
+papan-routing = { path = "crates/papan-routing" }
+papan-drc = { path = "crates/papan-drc" }
+papan-manufacturing = { path = "crates/papan-manufacturing" }
+papan-graph = { path = "crates/papan-graph" }
+papan-document = { path = "crates/papan-document" }
+papan-backend = { path = "crates/papan-backend" }
+papan-backend-kicad = { path = "crates/papan-backend-kicad" }
+papan-api = { path = "crates/papan-api" }
+papan-cli = { path = "crates/papan-cli" }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1

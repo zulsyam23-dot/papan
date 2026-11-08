@@ -1,0 +1,51 @@
+board "Embedded Sensor Node"
+
+size 70mm x 45mm
+thickness 1.6mm
+layers 2
+
+component U1: "ATmega32U4"
+component J1: connector
+component R1: resistor { value: 10kΩ }
+component R2: resistor { value: 10kΩ }
+component C1: capacitor { value: 100nF }
+component LED1: led
+
+net VCC { type: power voltage: 3.3V }
+net GND { type: ground }
+net RESET
+net LED_NET
+net SDA
+net SCL
+
+connect J1.1 -> VCC
+connect J1.2 -> GND
+connect J1.3 -> SDA
+connect J1.4 -> SCL
+
+connect U1.VCC -> VCC
+connect U1.AVCC -> VCC
+connect U1.UVCC -> VCC
+connect U1.VBUS -> VCC
+connect U1.GND -> GND
+connect U1.UGND -> GND
+connect U1.RESET -> RESET
+connect U1.PB0 -> LED_NET
+connect U1.PD1 -> SDA
+connect U1.PD0 -> SCL
+
+connect R1.1 -> VCC
+connect R1.2 -> RESET
+connect R2.1 -> VCC
+connect R2.2 -> SDA
+connect C1.1 -> VCC
+connect C1.2 -> GND
+connect LED1.A -> LED_NET
+connect LED1.K -> GND
+
+place J1 at (10mm, 22mm)
+place U1 at (35mm, 22mm)
+place R1 at (18mm, 36mm)
+place R2 at (28mm, 36mm)
+place C1 at (52mm, 36mm)
+place LED1 at (58mm, 14mm)

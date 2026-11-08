@@ -1,0 +1,14 @@
+[package]
+name = "papan-backend-kicad"
+description = "PAPAN KiCad interoperability adapter"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+papan-types.workspace = true
+papan-ir.workspace = true
+papan-ir-verifier.workspace = true
+papan-geometry.workspace = true
+papan-backend.workspace = true

@@ -1,0 +1,11 @@
+[package]
+name = "papan-ast"
+description = "PAPAN abstract syntax tree"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+papan-types.workspace = true
+serde.workspace = true

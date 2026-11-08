@@ -1,0 +1,40 @@
+board "Multilayer Demo"
+
+size 80mm x 60mm
+thickness 1.6mm
+layers 4
+
+component U1: "ATmega32U4"
+component R1: resistor { value: 10kΩ }
+component R2: resistor { value: 10kΩ }
+component C1: capacitor { value: 100nF }
+component C2: capacitor { value: 1uF }
+
+net VCC { type: power voltage: 5V }
+net GND { type: ground }
+net SIG1
+net SIG2
+
+connect U1.VCC -> VCC
+connect U1.AVCC -> VCC
+connect U1.UVCC -> VCC
+connect U1.VBUS -> VCC
+connect U1.GND -> GND
+connect U1.UGND -> GND
+connect U1.PB0 -> SIG1
+connect U1.PB1 -> SIG2
+
+connect R1.1 -> VCC
+connect R1.2 -> SIG1
+connect R2.1 -> SIG1
+connect R2.2 -> GND
+connect C1.1 -> VCC
+connect C1.2 -> GND
+connect C2.1 -> VCC
+connect C2.2 -> GND
+
+place U1 at (40mm, 30mm)
+place R1 at (16mm, 44mm)
+place R2 at (16mm, 16mm)
+place C1 at (64mm, 44mm)
+place C2 at (64mm, 16mm)

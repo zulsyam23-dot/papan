@@ -1,0 +1,31 @@
+[package]
+name = "papan-cli"
+description = "PAPAN command line interface"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "papan"
+path = "src/main.rs"
+
+[dependencies]
+papan-types.workspace = true
+papan-parser.workspace = true
+papan-semantic.workspace = true
+papan-library.workspace = true
+papan-ir.workspace = true
+papan-ir-verifier.workspace = true
+papan-routing.workspace = true
+papan-drc.workspace = true
+papan-electrical.workspace = true
+papan-manufacturing.workspace = true
+papan-document.workspace = true
+papan-backend.workspace = true
+papan-backend-kicad.workspace = true
+papan-api.workspace = true
+papan-geometry.workspace = true
+papan-graph.workspace = true
+serde.workspace = true
+serde_json.workspace = true

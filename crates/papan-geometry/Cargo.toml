@@ -1,0 +1,11 @@
+[package]
+name = "papan-geometry"
+description = "Fixed-point geometry kernel for PCB operations"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+papan-types.workspace = true
+serde.workspace = true

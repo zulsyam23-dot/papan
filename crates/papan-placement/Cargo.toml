@@ -1,0 +1,12 @@
+[package]
+name = "papan-placement"
+description = "PAPAN placement engine helpers"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+papan-types.workspace = true
+papan-ir.workspace = true
+papan-geometry.workspace = true

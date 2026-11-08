@@ -1,0 +1,18 @@
+[package]
+name = "papan-semantic"
+description = "PAPAN semantic analysis, type checking and IR lowering"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+papan-types.workspace = true
+papan-ast.workspace = true
+papan-ir.workspace = true
+papan-library.workspace = true
+papan-geometry.workspace = true
+papan-placement.workspace = true
+
+[dev-dependencies]
+papan-parser.workspace = true
