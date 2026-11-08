@@ -1,7 +1,9 @@
 use papan_api::PapanProject;
 use papan_document::PapanDocument;
+use papan_ir::{NetKind, PadShape, PcbIr};
 use papan_types::{Diagnostics, Severity};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct DiagnosticDto {
@@ -11,23 +13,105 @@ pub struct DiagnosticDto {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct ProjectInfo {
+pub struct LayerDto {
+    pub id: String,
+    pub name: String,
+    pub kind: String,
+    pub copper: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct NetDto {
+    pub id: String,
+    pub name: String,
+    pub kind: String,
+    pub member_count: usize,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct PointDto {
+    pub x: f64,
+    pub y: f64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct PadDto {
+    pub name: String,
+    pub x: f64,
+    pub y: f64,
+    pub w: f64,
+    pub h: f64,
+    pub shape: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ComponentDto {
+    pub id: String,
+    pub designator: String,
+    pub part: String,
+    pub value: String,
+    pub x: f64,
+    pub y: f64,
+    pub rotation_deg: f64,
+    pub side: String,
+    pub placed: bool,
+    pub pads: Vec<PadDto>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct TraceDto {
+    pub id: String,
+    pub net: String,
+    pub layer: String,
+    pub width_mm: f64,
+    pub points: Vec<PointDto>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ViaDto {
+    pub id: String,
+    pub net: String,
+    pub x: f64,
+    pub y: f64,
+    pub diameter_mm: f64,
+    pub drill_mm: f64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct BoardDto {
+    pub name: String,
+    pub width_mm: f64,
+    pub height_mm: f64,
+    pub thickness_mm: f64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct BoardView {
     pub name: String,
     pub source: String,
     pub diagnostics: Vec<DiagnosticDto>,
     pub has_errors: bool,
-    pub component_count: usize,
-    pub net_count: usize,
-    pub trace_count: usize,
-    pub via_count: usize,
+    pub board: BoardDto,
+    pub layers: Vec<LayerDto>,
+    pub nets: Vec<NetDto>,
+    pub components: Vec<ComponentDto>,
+    pub traces: Vec<TraceDto>,
+    pub vias: Vec<ViaDto>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct CheckResult {
-    pub diagnostics: Vec<DiagnosticDto>,
-    pub has_errors: bool,
-    pub component_count: usize,
-    pub net_count: usize,
+fn mm(nm: i64) -> f64 {
+    nm as f64 / 1_000_000.0
+}
+
+fn mm_len(l: papan_ir::Length) -> f64 {
+    mm(l.0)
+}
+
+fn pt(p: papan_ir::Point) -> PointDto {
+    PointDto {
+        x: mm_len(p.x),
+        y: mm_len(p.y),
+    }
 }
 
 fn severity_str(sev: &Severity) -> String {
@@ -45,36 +129,143 @@ fn map_diagnostics(diagnostics: &Diagnostics) -> Vec<DiagnosticDto> {
         .collect()
 }
 
-fn document_info(name: String, source: String, doc: &PapanDocument) -> ProjectInfo {
-    let diagnostics = map_diagnostics(&doc.diagnostics);
-    ProjectInfo {
+fn net_kind(kind: &NetKind) -> String {
+    format!("{kind:?}").to_lowercase()
+}
+
+fn pad_shape(shape: &PadShape) -> String {
+    match shape {
+        PadShape::Round => "circle",
+        PadShape::Rect => "rect",
+    }
+    .to_string()
+}
+
+fn build_board_view(name: String, source: String, ir: &PcbIr, diagnostics: &Diagnostics) -> BoardView {
+    let defs: BTreeMap<_, _> = ir.definitions.iter().map(|d| (d.id.clone(), d)).collect();
+    let layers = ir
+        .stackup
+        .layers
+        .iter()
+        .map(|l| LayerDto {
+            id: l.id.to_string(),
+            name: l.name.clone(),
+            kind: format!("{:?}", l.kind).to_lowercase(),
+            copper: l.kind.is_copper(),
+        })
+        .collect::<Vec<_>>();
+    let nets = ir
+        .nets
+        .iter()
+        .map(|n| NetDto {
+            id: n.id.to_string(),
+            name: n.name.clone(),
+            kind: net_kind(&n.kind),
+            member_count: n.members.len(),
+        })
+        .collect::<Vec<_>>();
+    let components = ir
+        .components
+        .iter()
+        .map(|c| {
+            let (x, y, placed) = match c.position {
+                Some(p) => (mm_len(p.x), mm_len(p.y), true),
+                None => (0.0, 0.0, false),
+            };
+            let def = defs.get(&c.definition_id).copied();
+            let pads = def
+                .map(|d| {
+                    d.footprint
+                        .pads
+                        .iter()
+                        .map(|pad| PadDto {
+                            name: if !pad.number.is_empty() {
+                                pad.number.clone()
+                            } else {
+                                pad.pin.clone()
+                            },
+                            x: mm_len(pad.position.x),
+                            y: mm_len(pad.position.y),
+                            w: mm_len(pad.size.width),
+                            h: mm_len(pad.size.height),
+                            shape: pad_shape(&pad.shape),
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            let value = c
+                .properties
+                .get("value")
+                .map(|v| format!("{v:?}"))
+                .or_else(|| c.value.as_ref().map(|v| format!("{v:?}")))
+                .unwrap_or_default();
+            ComponentDto {
+                id: c.id.to_string(),
+                designator: c.designator.clone(),
+                part: def.map(|d| d.name.clone()).unwrap_or_else(|| c.definition_id.to_string()),
+                value,
+                x,
+                y,
+                rotation_deg: c.rotation.0 as f64 / 1000.0,
+                side: format!("{:?}", c.side).to_lowercase(),
+                placed,
+                pads,
+            }
+        })
+        .collect::<Vec<_>>();
+    let traces = ir
+        .traces
+        .iter()
+        .map(|t| TraceDto {
+            id: t.id.to_string(),
+            net: t.net.to_string(),
+            layer: t.layer.to_string(),
+            width_mm: mm_len(t.width),
+            points: t.points.iter().copied().map(pt).collect(),
+        })
+        .collect::<Vec<_>>();
+    let vias = ir
+        .vias
+        .iter()
+        .map(|v| ViaDto {
+            id: v.id.to_string(),
+            net: v.net.to_string(),
+            x: mm_len(v.at.x),
+            y: mm_len(v.at.y),
+            diameter_mm: mm_len(v.diameter),
+            drill_mm: mm_len(v.drill),
+        })
+        .collect::<Vec<_>>();
+    BoardView {
         name,
         source,
-        has_errors: doc.diagnostics.has_errors(),
-        diagnostics,
-        component_count: doc.ir.components.len(),
-        net_count: doc.ir.nets.len(),
-        trace_count: doc.ir.traces.len(),
-        via_count: doc.ir.vias.len(),
+        has_errors: diagnostics.has_errors(),
+        diagnostics: map_diagnostics(diagnostics),
+        board: BoardDto {
+            name: ir.board.name.clone(),
+            width_mm: mm_len(ir.board.width),
+            height_mm: mm_len(ir.board.height),
+            thickness_mm: mm_len(ir.board.thickness),
+        },
+        layers,
+        nets,
+        components,
+        traces,
+        vias,
     }
 }
 
 #[tauri::command]
-fn open_project(path: String) -> Result<ProjectInfo, String> {
+fn open_project(path: String) -> Result<BoardView, String> {
     let project = PapanProject::open(&path).map_err(|e| e.to_string())?;
     let doc = project.document();
-    Ok(document_info(doc.title.clone(), doc.source.clone(), doc))
+    Ok(build_board_view(doc.title.clone(), doc.source.clone(), &doc.ir, &doc.diagnostics))
 }
 
 #[tauri::command]
-fn check_source(source: String) -> Result<CheckResult, String> {
+fn check_source(source: String) -> Result<BoardView, String> {
     let doc = PapanDocument::from_source(&source);
-    Ok(CheckResult {
-        has_errors: doc.diagnostics.has_errors(),
-        diagnostics: map_diagnostics(&doc.diagnostics),
-        component_count: doc.ir.components.len(),
-        net_count: doc.ir.nets.len(),
-    })
+    Ok(build_board_view(doc.title.clone(), doc.source.clone(), &doc.ir, &doc.diagnostics))
 }
 
 #[tauri::command]

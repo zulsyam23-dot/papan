@@ -2158,6 +2158,7 @@ version = "0.1.0"
 dependencies = [
  "papan-api",
  "papan-document",
+ "papan-ir",
  "papan-types",
  "serde",
  "serde_json",

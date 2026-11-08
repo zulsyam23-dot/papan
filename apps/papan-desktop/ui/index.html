@@ -7,33 +7,52 @@
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
-    <header>
-      <h1>PAPAN Desktop</h1>
-      <p id="app-info" class="muted"></p>
-    </header>
-    <main>
-      <section class="panel">
-        <h2>Project</h2>
-        <div class="row">
-          <input id="project-path" placeholder="Path ke folder project .papan / .pn / direktori" />
-          <button id="open-btn">Open &amp; Check</button>
-        </div>
-        <div id="project-summary" class="muted"></div>
-      </section>
-      <section class="panel grid">
-        <div>
-          <h2>Source (.pn)</h2>
-          <textarea id="source" spellcheck="false"></textarea>
-          <div class="row">
-            <button id="check-btn">Check Source</button>
+    <div class="app">
+      <header class="toolbar">
+        <div class="brand">PAPAN <span class="sub">PCB Editor</span></div>
+        <input id="project-path" class="path" placeholder="Project path (folder / .papan / .pn)" />
+        <button id="open-btn">Open</button>
+        <button id="check-btn">Check Source</button>
+        <button id="fit-btn">Zoom Fit</button>
+        <span id="app-info" class="muted"></span>
+      </header>
+      <div class="workspace">
+        <aside class="sidebar">
+          <section>
+            <h3>Board</h3>
+            <div id="board-info" class="info muted">No project loaded.</div>
+          </section>
+          <section>
+            <h3>Layers</h3>
+            <div id="layers" class="list"></div>
+          </section>
+          <section>
+            <h3>Nets</h3>
+            <div id="nets" class="list"></div>
+          </section>
+          <section>
+            <h3>Components</h3>
+            <div id="components" class="list"></div>
+          </section>
+        </aside>
+        <main class="center">
+          <div class="canvas-wrap">
+            <svg id="board-canvas" xmlns="http://www.w3.org/2000/svg"></svg>
+            <div id="canvas-hint" class="hint">Open proyek PAPAN atau tulis source, lalu Open/Check.</div>
           </div>
-        </div>
-        <div>
-          <h2>Diagnostics</h2>
-          <pre id="diagnostics"></pre>
-        </div>
-      </section>
-    </main>
+          <section class="bottom">
+            <div class="bottom-tabs"><strong>Diagnostics</strong> <span id="diag-summary" class="muted"></span></div>
+            <pre id="diagnostics"></pre>
+          </section>
+        </main>
+        <aside class="right">
+          <section>
+            <h3>Source</h3>
+            <textarea id="source" spellcheck="false" placeholder="; PAPAN source (.pn)"></textarea>
+          </section>
+        </aside>
+      </div>
+    </div>
     <script src="main.js"></script>
   </body>
 </html>
