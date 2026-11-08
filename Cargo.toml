@@ -21,7 +21,6 @@ members = [
     "crates/papan-backend-kicad",
     "crates/papan-api",
     "crates/papan-cli",
-    "apps/papan-desktop/src-tauri",
     "tests",
 ]
 
