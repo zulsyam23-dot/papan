@@ -1,0 +1,42 @@
+# Scrip uji coba PAPAN - buka di PAPAN Desktop
+# Cara uji: di aplikasi, isi path:
+#   C:\Users\PC\Documents\papan\examples\ujicoba
+# lalu klik Open. Atau paste isi file ini ke panel Source lalu Check Source.
+
+board "Uji Coba PAPAN"
+
+size 80mm x 50mm
+thickness 1.6mm
+layers 2
+
+component R1: resistor {
+    value: 1kΩ
+}
+component R2: resistor {
+    value: 10kΩ
+}
+component R3: resistor {
+    value: 330Ω
+}
+component C1: capacitor {
+    value: 100nF
+}
+
+net VCC
+net GND
+net SIG1
+net SIG2
+
+connect R1.1 -> VCC
+connect R1.2 -> SIG1
+connect R2.1 -> SIG1
+connect R2.2 -> GND
+connect R3.1 -> VCC
+connect R3.2 -> SIG2
+connect C1.1 -> SIG2
+connect C1.2 -> GND
+
+place R1 at (15mm, 15mm)
+place R2 at (15mm, 35mm)
+place R3 at (40mm, 15mm)
+place C1 at (40mm, 35mm)
