@@ -123,6 +123,16 @@ fn route_net(ir: &mut PcbIr, net_id: &ObjectId, diagnostics: &mut Diagnostics) {
                 .with_object(&net_id.0),
             );
         }
+        if directive.impedance.is_some() {
+            diagnostics.push(
+                Diagnostic::info(
+                    "ROUTE_013",
+                    format!("impedance control for '{net_name}' is recorded but not enforced"),
+                )
+                .with_object(&net_id.0)
+                .with_suggestion("controlled-impedance routing is not implemented yet"),
+            );
+        }
     }
 
     let min_width = ir.constraints.min_trace_width;

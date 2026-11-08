@@ -159,6 +159,7 @@ pub fn check_erc(ir: &PcbIr) -> Diagnostics {
 
     check_pin_maps(ir, &mut diagnostics);
     check_unconnected(ir, &mut diagnostics);
+    check_noconnect_usage(ir, &mut diagnostics);
     check_nets(ir, &mut diagnostics);
     check_unrouted(ir, &mut diagnostics);
     check_duplicate_membership(ir, &mut diagnostics);
@@ -213,6 +214,42 @@ fn check_unconnected(ir: &PcbIr, diagnostics: &mut Diagnostics) {
     }
 }
 
+fn check_noconnect_usage(ir: &PcbIr, diagnostics: &mut Diagnostics) {
+    let mut nc_pins: BTreeSet<(ObjectId, String)> = BTreeSet::new();
+    for component in &ir.components {
+        let Some(definition) = ir.definition_for(component) else {
+            continue;
+        };
+        for pin in &definition.pins {
+            if pin.electrical == PinType::NoConnect {
+                nc_pins.insert((component.id.clone(), pin.name.clone()));
+            }
+        }
+    }
+    if nc_pins.is_empty() {
+        return;
+    }
+    for connection in &ir.connections {
+        if nc_pins.contains(&(connection.pin.component.clone(), connection.pin.pin.clone())) {
+            let designator = ir
+                .find_component_by_id(&connection.pin.component)
+                .map(|c| c.designator.as_str())
+                .unwrap_or(&connection.pin.component.0);
+            diagnostics.push(
+                Diagnostic::error(
+                    "ERC_011",
+                    format!(
+                        "no-connect pin '{}.{}' is connected to a net",
+                        designator, connection.pin.pin
+                    ),
+                )
+                .with_object(&connection.pin.component.0)
+                .with_suggestion("remove the connection or change the pin type if it should be used"),
+            );
+        }
+    }
+}
+
 fn check_nets(ir: &PcbIr, diagnostics: &mut Diagnostics) {
     for net in &ir.nets {
         if net.members.is_empty() {
@@ -233,15 +270,20 @@ fn check_nets(ir: &PcbIr, diagnostics: &mut Diagnostics) {
         }
 
         let mut outputs = Vec::new();
-        let mut power_pins = 0usize;
+        let mut power_sources = 0usize;
         let mut ground_pins = 0usize;
         for member in &net.members {
             let Some(pin) = ir.pin_definition(member) else {
                 continue;
             };
             match pin.electrical {
-                PinType::Output => outputs.push(format!("{}.{}", member.component.0, member.pin)),
-                PinType::Power => power_pins += 1,
+                PinType::Output => {
+                    outputs.push(format!("{}.{}", member.component.0, member.pin));
+                    if net.kind == papan_ir::NetKind::Power {
+                        power_sources += 1; // e.g. regulator output
+                    }
+                }
+                PinType::Power => power_sources += 1,
                 PinType::Ground => ground_pins += 1,
                 _ => {}
             }
@@ -287,7 +329,7 @@ fn check_nets(ir: &PcbIr, diagnostics: &mut Diagnostics) {
                 .with_suggestion("use a single driver or mark the pins bidirectional"),
             );
         }
-        if net.kind == papan_ir::NetKind::Power && power_pins == 0 {
+        if net.kind == papan_ir::NetKind::Power && power_sources == 0 {
             diagnostics.push(
                 Diagnostic::warning(
                     "ERC_025",
@@ -529,5 +571,59 @@ mod tests {
         let erc = check_erc(&ir);
         assert!(erc.iter().any(|d| d.code == "ERC_023"), "{erc:?}");
         assert!(!validate(&ir).production_ready);
+    }
+
+    #[test]
+    fn noconnect_pin_must_not_be_connected() {
+        let mut ir = base_ir();
+        ir.add_definition(definition(
+            "chip",
+            &[("NC", PinType::NoConnect), ("IO", PinType::Passive)],
+        ));
+        ir.add_component(component("U1", "chip", 10.0));
+        ir.add_component(component("U2", "chip", 20.0));
+        let nc = PinRef::new(ObjectId::stable("component", "U1"), "NC");
+        let io = PinRef::new(ObjectId::stable("component", "U2"), "IO");
+        ir.add_net(net("SIG", NetKind::Digital, vec![nc.clone(), io.clone()]));
+        let net_id = ObjectId::stable("net", "SIG");
+        ir.connect(nc, net_id.clone(), None);
+        ir.connect(io, net_id, None);
+        let erc = check_erc(&ir);
+        assert!(erc.iter().any(|d| d.code == "ERC_011"), "{erc:?}");
+        assert!(!validate(&ir).production_ready);
+    }
+
+    #[test]
+    fn noconnect_pin_is_not_reported_as_unconnected() {
+        let mut ir = base_ir();
+        ir.add_definition(definition(
+            "chip",
+            &[("NC", PinType::NoConnect), ("IO", PinType::Passive)],
+        ));
+        ir.add_component(component("U1", "chip", 10.0));
+        let pins = unconnected_pins(&ir);
+        assert!(
+            !pins.iter().any(|p| p.pin == "NC"),
+            "NC pin should be ignored: {pins:?}"
+        );
+        let erc = check_erc(&ir);
+        assert!(!erc.iter().any(|d| d.code == "ERC_011"));
+    }
+
+    #[test]
+    fn power_net_accepts_output_as_source() {
+        let mut ir = base_ir();
+        ir.add_definition(definition("reg", &[("VOUT", PinType::Output)]));
+        ir.add_definition(definition("load", &[("VCC", PinType::Power)]));
+        ir.add_component(component("U1", "reg", 10.0));
+        ir.add_component(component("U2", "load", 20.0));
+        let src = PinRef::new(ObjectId::stable("component", "U1"), "VOUT");
+        let dst = PinRef::new(ObjectId::stable("component", "U2"), "VCC");
+        ir.add_net(net("VCC", NetKind::Power, vec![src.clone(), dst.clone()]));
+        let net_id = ObjectId::stable("net", "VCC");
+        ir.connect(src, net_id.clone(), None);
+        ir.connect(dst, net_id, None);
+        let erc = check_erc(&ir);
+        assert!(!erc.iter().any(|d| d.code == "ERC_025"), "output may source power net: {erc:?}");
     }
 }

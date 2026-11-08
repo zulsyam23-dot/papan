@@ -8,7 +8,7 @@
 
 use papan_geometry::{Rect, Size};
 use papan_ir::{
-    ComponentDefinition, ComponentInstance, PcbIr, PadDefinition, PinRef, Side,
+    ComponentDefinition, ComponentInstance, PadDefinition, PadShape, PcbIr, PinRef, Side,
 };
 use papan_types::{Angle, Diagnostic, Diagnostics, Length, Point};
 
@@ -52,15 +52,45 @@ pub fn pin_ref_position(ir: &PcbIr, pin: &PinRef) -> Option<Point> {
     pin_position(ir, component, &pin.pin)
 }
 
-/// Absolute bounding rectangle of a pad.
+/// Absolute axis-aligned bounding rectangle of a pad's copper shape.
+///
+/// Uses the correct AABB of the (rotated) pad geometry to avoid false negatives
+/// in clearance/collision checks for non-orthogonal rotations. For *circular*
+/// `Round` pads, prefer [`round_pad_disk`] for disk-accurate clearance distance;
+/// the AABB remains a conservative fallback.
 pub fn pad_rect(component: &ComponentInstance, pad: &PadDefinition) -> Option<Rect> {
     let center = pad_position(component, pad)?;
-    let mut size = pad.size;
-    let rotation = component.rotation.normalized().0 % 180_000;
-    if rotation >= 45_000 && rotation < 135_000 {
-        size = Size::new(size.height, size.width);
+    let normalized = component.rotation.normalized();
+    if normalized.0 % 360_000 == 0 {
+        return Some(Rect::centered(center, pad.size));
     }
+    let radians = normalized.as_deg().to_radians();
+    let (sin, cos) = radians.sin_cos();
+    let hw = pad.size.width.0 as f64 / 2.0;
+    let hh = pad.size.height.0 as f64 / 2.0;
+    let ax = (hw * cos).abs() + (hh * sin).abs();
+    let ay = (hw * sin).abs() + (hh * cos).abs();
+    let size = Size::new(
+        Length((ax * 2.0).round() as i64),
+        Length((ay * 2.0).round() as i64),
+    );
     Some(Rect::centered(center, size))
+}
+
+/// Disk geometry `(center, radius)` for a *circular* `Round` pad.
+///
+/// Returns `None` for non-round or obround (unequal axes) pads so callers keep a
+/// conservative shape (no false negatives). This enables disk-accurate clearance
+/// distance and reduces conservative false positives vs AABB corners.
+pub fn round_pad_disk(component: &ComponentInstance, pad: &PadDefinition) -> Option<(Point, Length)> {
+    if pad.shape != PadShape::Round {
+        return None;
+    }
+    if pad.size.width != pad.size.height {
+        return None;
+    }
+    let center = pad_position(component, pad)?;
+    Some((center, Length(pad.size.width.0 / 2)))
 }
 
 pub fn pad_center(component: &ComponentInstance, pad: &PadDefinition) -> Option<Point> {
@@ -289,6 +319,54 @@ mod tests {
         let component = instance(Point::from_mm(10.0, 10.0), Angle::from_deg(90.0));
         let position = pad_position(&component, &definition.footprint.pads[0]).unwrap();
         assert_eq!(position, Point::from_mm(10.0, 12.0));
+    }
+
+    #[test]
+    fn pad_rect_uses_correct_aabb_for_non_orthogonal_rotation() {
+        let mut pad = definition().footprint.pads[0].clone();
+        pad.size = Size::from_mm(2.0, 1.0);
+        pad.position = Point::from_mm(0.0, 0.0);
+        let component = instance(Point::from_mm(10.0, 10.0), Angle::from_deg(45.0));
+        let rect = pad_rect(&component, &pad).unwrap();
+        // True AABB of 2x1 rect at 45deg: (w+h)/sqrt(2) ~ 2.121mm
+        assert!(
+            rect.size.width.0 >= 2_120_000 && rect.size.height.0 >= 2_120_000,
+            "45deg AABB too small (false-negative risk): {:?}",
+            rect.size
+        );
+        assert!(rect.size.width.0 <= 2_122_000 && rect.size.height.0 <= 2_122_000);
+    }
+
+    #[test]
+    fn pad_rect_90deg_matches_swap() {
+        let mut pad = definition().footprint.pads[0].clone();
+        pad.size = Size::from_mm(2.0, 1.0);
+        pad.position = Point::from_mm(0.0, 0.0);
+        let component = instance(Point::from_mm(10.0, 10.0), Angle::from_deg(90.0));
+        let rect = pad_rect(&component, &pad).unwrap();
+        assert_eq!(rect.size.width, Length::from_mm(1.0));
+        assert_eq!(rect.size.height, Length::from_mm(2.0));
+    }
+
+    #[test]
+    fn round_pad_disk_only_for_circular_round_pads() {
+        let mut pad = definition().footprint.pads[0].clone();
+        pad.shape = PadShape::Round;
+        pad.size = Size::from_mm(1.6, 1.6);
+        pad.position = Point::from_mm(0.0, 0.0);
+        let component = instance(Point::from_mm(10.0, 10.0), Angle::ZERO);
+        let (center, radius) = round_pad_disk(&component, &pad).expect("circular round pad");
+        assert_eq!(center, Point::from_mm(10.0, 10.0));
+        assert_eq!(radius, Length::from_mm(0.8));
+
+        // Obround (unequal axes): keep conservative (no disk)
+        pad.size = Size::from_mm(2.0, 1.0);
+        assert!(round_pad_disk(&component, &pad).is_none());
+
+        // Rect shape: no disk
+        pad.shape = PadShape::Rect;
+        pad.size = Size::from_mm(1.6, 1.6);
+        assert!(round_pad_disk(&component, &pad).is_none());
     }
 
     #[test]

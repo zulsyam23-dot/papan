@@ -9,7 +9,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use papan_electrical::unrouted_nets;
 use papan_geometry::Rect;
 use papan_ir::{ComponentInstance, Layer, Length, ObjectId, PcbIr, PadDefinition, Point, Trace, Via};
-use papan_placement::{collisions, component_rect, pad_rect};
+use papan_placement::{collisions, component_rect, pad_rect, round_pad_disk};
 use papan_types::{Diagnostic, Diagnostics, ValidationReport};
 
 /// Run all DRC checks.
@@ -21,10 +21,13 @@ pub fn check_drc(ir: &PcbIr) -> Diagnostics {
     check_trace_clearance(ir, &mut diagnostics);
     check_trace_pad_clearance(ir, &mut diagnostics);
     check_via_clearance(ir, &mut diagnostics);
+    check_pad_clearance(ir, &mut diagnostics);
     check_edge_clearance(ir, &mut diagnostics);
     check_drill_spacing(ir, &mut diagnostics);
+    check_hole_to_copper(ir, &mut diagnostics);
     check_unrouted(ir, &mut diagnostics);
     check_placement(ir, &mut diagnostics);
+    check_route_constraints(ir, &mut diagnostics);
 
     diagnostics.sort();
     diagnostics
@@ -208,15 +211,30 @@ fn check_trace_pad_clearance(ir: &PcbIr, diagnostics: &mut Diagnostics) {
                 {
                     continue;
                 }
-                let Some(rect) = pad_rect(component, pad) else {
-                    continue;
-                };
                 let allowance = ir.constraints.clearance + Length(trace.width.0 / 2);
-                if trace
-                    .segments()
-                    .iter()
-                    .any(|segment| segment.distance_to_rect(rect) < allowance)
+                let (too_close, location) = if let Some((center, radius)) = round_pad_disk(component, pad)
                 {
+                    let allow = allowance + radius;
+                    (
+                        trace
+                            .segments()
+                            .iter()
+                            .any(|segment| segment.distance_to_point(center) < allow),
+                        center,
+                    )
+                } else {
+                    let Some(rect) = pad_rect(component, pad) else {
+                        continue;
+                    };
+                    (
+                        trace
+                            .segments()
+                            .iter()
+                            .any(|segment| segment.distance_to_rect(rect) < allowance),
+                        rect.center(),
+                    )
+                };
+                if too_close {
                     diagnostics.push(
                         Diagnostic::error(
                             "DRC_121",
@@ -226,7 +244,7 @@ fn check_trace_pad_clearance(ir: &PcbIr, diagnostics: &mut Diagnostics) {
                             ),
                         )
                         .with_object(&trace.id.0)
-                        .with_location(rect.center())
+                        .with_location(location)
                         .with_suggestion("move the trace or the component"),
                     );
                 }
@@ -236,6 +254,7 @@ fn check_trace_pad_clearance(ir: &PcbIr, diagnostics: &mut Diagnostics) {
 }
 
 fn check_via_clearance(ir: &PcbIr, diagnostics: &mut Diagnostics) {
+    let pin_nets = pin_net_map(ir);
     for via in &ir.vias {
         for trace in &ir.traces {
             if via.net == trace.net {
@@ -261,6 +280,48 @@ fn check_via_clearance(ir: &PcbIr, diagnostics: &mut Diagnostics) {
                     .with_object(&via.id.0)
                     .with_location(via.at),
                 );
+            }
+        }
+        // via-to-pad clearance (different nets)
+        let via_radius = Length(via.diameter.0 / 2);
+        for component in &ir.components {
+            let Some(definition) = ir.definition_for(component) else { continue; };
+            for pad in &definition.footprint.pads {
+                if !pad_relevant_to_via(pad, via, ir) {
+                    continue;
+                }
+                if pin_nets
+                    .get(&(component.id.clone(), pad.pin.clone()))
+                    .map(|net| *net == via.net)
+                    .unwrap_or(false)
+                {
+                    continue;
+                }
+                let base_allow = via_radius + ir.constraints.clearance;
+                let (too_close, _location) = if let Some((center, radius)) = round_pad_disk(component, pad)
+                {
+                    let allow = base_allow + radius;
+                    let allow_sq = (allow.0 as i128) * (allow.0 as i128);
+                    (via.at.distance_sq(center) < allow_sq, center)
+                } else {
+                    let Some(rect) = pad_rect(component, pad) else { continue; };
+                    let allow_sq = (base_allow.0 as i128) * (base_allow.0 as i128);
+                    (rect.distance_sq_to_point(via.at) < allow_sq, rect.center())
+                };
+                if too_close {
+                    diagnostics.push(
+                        Diagnostic::error(
+                            "DRC_124",
+                            format!(
+                                "via '{}' is too close to pad '{}' on component '{}'",
+                                via.id.0, pad.number, component.designator
+                            ),
+                        )
+                        .with_object(&via.id.0)
+                        .with_location(via.at)
+                        .with_suggestion("move the via or the component"),
+                    );
+                }
             }
         }
     }
@@ -332,6 +393,44 @@ fn check_edge_clearance(ir: &PcbIr, diagnostics: &mut Diagnostics) {
             );
         }
     }
+    for component in &ir.components {
+        let Some(definition) = ir.definition_for(component) else { continue; };
+        for pad in &definition.footprint.pads {
+            let (distance, location) = if let Some((center, radius)) = round_pad_disk(component, pad) {
+                let mut d = Length(i64::MAX);
+                for edge in &edges {
+                    let to_center = edge.distance_to_point(center);
+                    let gap = Length((to_center.0 - radius.0).max(0));
+                    d = d.min(gap);
+                }
+                (d, center)
+            } else {
+                let Some(rect) = pad_rect(component, pad) else { continue; };
+                let mut d = Length(i64::MAX);
+                for edge in &edges {
+                    d = d.min(edge.distance_to_rect(rect));
+                }
+                (d, rect.center())
+            };
+            if distance != Length(i64::MAX)
+                && distance < ir.constraints.copper_edge_clearance
+            {
+                diagnostics.push(
+                    Diagnostic::error(
+                        "DRC_132",
+                        format!(
+                            "pad '{}' on component '{}' violates copper-to-edge clearance",
+                            pad.number, component.designator
+                        ),
+                    )
+                    .with_object(&component.id.0)
+                    .with_location(location)
+                    .with_suggestion("move the component away from the board edge"),
+                );
+                break;
+            }
+        }
+    }
 }
 
 fn check_drill_spacing(ir: &PcbIr, diagnostics: &mut Diagnostics) {
@@ -381,6 +480,182 @@ fn check_drill_spacing(ir: &PcbIr, diagnostics: &mut Diagnostics) {
     }
 }
 
+fn check_hole_to_copper(ir: &PcbIr, diagnostics: &mut Diagnostics) {
+    let pin_nets = pin_net_map(ir);
+    let clearance = ir.constraints.clearance;
+
+    // Via holes vs foreign copper (traces, pads) on layers the via spans.
+    for via in &ir.vias {
+        let hole_r = Length(via.drill.0 / 2);
+        for trace in &ir.traces {
+            if trace.net == via.net {
+                continue;
+            }
+            if !via_covers_layer(via, &trace.layer, ir) {
+                continue;
+            }
+            let allow = hole_r + Length(trace.width.0 / 2) + clearance;
+            if trace
+                .segments()
+                .iter()
+                .any(|segment| segment.distance_to_point(via.at) < allow)
+            {
+                diagnostics.push(
+                    Diagnostic::error(
+                        "DRC_126",
+                        format!(
+                            "via drill '{}' violates hole-to-copper clearance against trace '{}'",
+                            via.id.0, trace.id.0
+                        ),
+                    )
+                    .with_object(&via.id.0)
+                    .with_location(via.at)
+                    .with_suggestion("move the via/trace apart or use a smaller drill with adequate annular ring"),
+                );
+            }
+        }
+        for component in &ir.components {
+            let Some(definition) = ir.definition_for(component) else {
+                continue;
+            };
+            for pad in &definition.footprint.pads {
+                if !pad_relevant_to_via(pad, via, ir) {
+                    continue;
+                }
+                if pin_nets
+                    .get(&(component.id.clone(), pad.pin.clone()))
+                    .map(|net| *net == via.net)
+                    .unwrap_or(false)
+                {
+                    continue;
+                }
+                let too_close = if let Some((center, radius)) = round_pad_disk(component, pad) {
+                    let allow = hole_r.0 as i128 + clearance.0 as i128 + radius.0 as i128;
+                    via.at.distance_sq(center) < allow * allow
+                } else {
+                    let Some(rect) = pad_rect(component, pad) else {
+                        continue;
+                    };
+                    let allow = hole_r + clearance;
+                    let allow_sq = (allow.0 as i128) * (allow.0 as i128);
+                    rect.distance_sq_to_point(via.at) < allow_sq
+                };
+                if too_close {
+                    diagnostics.push(
+                        Diagnostic::error(
+                            "DRC_126",
+                            format!(
+                                "via drill '{}' violates hole-to-copper clearance against pad '{}' on component '{}'",
+                                via.id.0, pad.number, component.designator
+                            ),
+                        )
+                        .with_object(&via.id.0)
+                        .with_location(via.at)
+                        .with_suggestion("move the via or component apart"),
+                    );
+                }
+            }
+        }
+    }
+
+    // THT/plated pad holes vs foreign copper on copper layers.
+    for component in &ir.components {
+        let Some(definition) = ir.definition_for(component) else {
+            continue;
+        };
+        for pad in &definition.footprint.pads {
+            let Some(drill) = pad.drill else {
+                continue;
+            };
+            let Some(center) = pad_center(component, pad) else {
+                continue;
+            };
+            let hole_net = pin_nets.get(&(component.id.clone(), pad.pin.clone()));
+            let hole_r = Length(drill.0 / 2);
+            let hole_id = format!("pad {}.{}", component.designator, pad.number);
+
+            for trace in &ir.traces {
+                if hole_net.map(|net| *net == trace.net).unwrap_or(false) {
+                    continue;
+                }
+                let allow = hole_r + Length(trace.width.0 / 2) + clearance;
+                if trace
+                    .segments()
+                    .iter()
+                    .any(|segment| segment.distance_to_point(center) < allow)
+                {
+                    diagnostics.push(
+                        Diagnostic::error(
+                            "DRC_126",
+                            format!(
+                                "pad drill '{}' violates hole-to-copper clearance against trace '{}'",
+                                hole_id, trace.id.0
+                            ),
+                        )
+                        .with_object(&component.id.0)
+                        .with_location(center)
+                        .with_suggestion("move the component/trace apart or reduce drill size"),
+                    );
+                }
+            }
+
+            for other in &ir.components {
+                let Some(other_def) = ir.definition_for(other) else {
+                    continue;
+                };
+                for other_pad in &other_def.footprint.pads {
+                    if other.id == component.id && other_pad.number == pad.number {
+                        continue;
+                    }
+                    if !pads_share_copper_layer(pad, other_pad) {
+                        // THT hole still passes through; but only check where copper exists
+                        if other_pad.kind != papan_ir::PadKind::ThroughHole
+                            && other_pad.layers != papan_ir::PadLayers::Both
+                        {
+                            continue;
+                        }
+                    }
+                    if pin_nets
+                        .get(&(other.id.clone(), other_pad.pin.clone()))
+                        .zip(hole_net)
+                        .map(|(a, b)| *a == *b)
+                        .unwrap_or(false)
+                    {
+                        continue;
+                    }
+                    let too_close = if let Some((other_center, radius)) =
+                        round_pad_disk(other, other_pad)
+                    {
+                        let allow = hole_r.0 as i128 + clearance.0 as i128 + radius.0 as i128;
+                        center.distance_sq(other_center) < allow * allow
+                    } else {
+                        let Some(rect) = pad_rect(other, other_pad) else {
+                            continue;
+                        };
+                        let allow = hole_r + clearance;
+                        let allow_sq = (allow.0 as i128) * (allow.0 as i128);
+                        rect.distance_sq_to_point(center) < allow_sq
+                    };
+                    if too_close {
+                        diagnostics.push(
+                            Diagnostic::error(
+                                "DRC_126",
+                                format!(
+                                    "pad drill '{}' violates hole-to-copper clearance against pad '{}' on component '{}'",
+                                    hole_id, other_pad.number, other.designator
+                                ),
+                            )
+                            .with_object(&component.id.0)
+                            .with_location(center)
+                            .with_suggestion("move the components apart"),
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
+
 fn check_unrouted(ir: &PcbIr, diagnostics: &mut Diagnostics) {
     for net in unrouted_nets(ir) {
         diagnostics.push(
@@ -395,6 +670,142 @@ fn check_unrouted(ir: &PcbIr, diagnostics: &mut Diagnostics) {
             .with_object(&net.net.0)
             .with_suggestion("route the net or add a waiver"),
         );
+    }
+}
+
+fn check_route_constraints(ir: &PcbIr, diagnostics: &mut Diagnostics) {
+    let net_names: BTreeMap<_, _> = ir.nets.iter().map(|n| (n.id.clone(), n.name.clone())).collect();
+    for directive in &ir.route_directives {
+        let name = net_names
+            .get(&directive.net)
+            .cloned()
+            .unwrap_or_else(|| directive.net.0.clone());
+        if directive.differential_pair {
+            let mut d = Diagnostic::warning(
+                "DRC_170",
+                format!("differential-pair constraint on '{name}' is not fully enforced"),
+            )
+            .with_object(&directive.net.0)
+            .with_suggestion("review differential-pair routing manually; advanced support is not implemented yet");
+            if let Some(span) = directive.source_span { d = d.with_span(span); }
+            diagnostics.push(d);
+        }
+        if directive.length.is_some() {
+            let mut d = Diagnostic::warning(
+                "DRC_171",
+                format!("length-matching constraint on '{name}' is recorded but not enforced"),
+            )
+            .with_object(&directive.net.0)
+            .with_suggestion("verify trace length manually; length tuning is not implemented yet");
+            if let Some(span) = directive.source_span { d = d.with_span(span); }
+            diagnostics.push(d);
+        }
+        if directive.impedance.is_some() {
+            let mut d = Diagnostic::warning(
+                "DRC_172",
+                format!("controlled-impedance constraint on '{name}' is recorded but not enforced"),
+            )
+            .with_object(&directive.net.0)
+            .with_suggestion("verify impedance with your stackup/manufacturer; impedance control is not implemented yet");
+            if let Some(span) = directive.source_span { d = d.with_span(span); }
+            diagnostics.push(d);
+        }
+    }
+}
+
+fn pads_share_copper_layer(a: &PadDefinition, b: &PadDefinition) -> bool {
+    use papan_ir::{PadKind, PadLayers};
+    if a.kind == PadKind::ThroughHole || b.kind == PadKind::ThroughHole {
+        return true;
+    }
+    matches!(
+        (a.layers, b.layers),
+        (PadLayers::Both, _) | (_, PadLayers::Both) | (PadLayers::Top, PadLayers::Top) | (PadLayers::Bottom, PadLayers::Bottom)
+    )
+}
+
+fn rect_distance_sq(a: papan_geometry::Rect, b: papan_geometry::Rect) -> i128 {
+    a.edges()
+        .into_iter()
+        .map(|edge| edge.distance_sq_to_rect(b))
+        .min()
+        .unwrap_or(i128::MAX)
+}
+
+fn check_pad_clearance(ir: &PcbIr, diagnostics: &mut Diagnostics) {
+    let pin_nets = pin_net_map(ir);
+    // collect with pad ref info; `disk` enables disk-accurate distance for circular Round pads.
+    struct P {
+        comp: ObjectId,
+        designator: String,
+        number: String,
+        net: ObjectId,
+        rect: papan_geometry::Rect,
+        disk: Option<(Point, Length)>,
+        pad: PadDefinition,
+    }
+    let mut all: Vec<P> = Vec::new();
+    for component in &ir.components {
+        let Some(definition) = ir.definition_for(component) else { continue; };
+        for pad in &definition.footprint.pads {
+            if let (Some(net), Some(rect)) = (
+                pin_nets.get(&(component.id.clone(), pad.pin.clone())).cloned(),
+                pad_rect(component, pad),
+            ) {
+                all.push(P {
+                    comp: component.id.clone(),
+                    designator: component.designator.clone(),
+                    number: pad.number.clone(),
+                    net,
+                    rect,
+                    disk: round_pad_disk(component, pad),
+                    pad: pad.clone(),
+                });
+            }
+        }
+    }
+    let clearance = ir.constraints.clearance.0 as i128;
+    for i in 0..all.len() {
+        for j in (i + 1)..all.len() {
+            let a = &all[i];
+            let b = &all[j];
+            if a.net == b.net { continue; }
+            if a.comp == b.comp { continue; } // intra-component pad spacing is footprint-defined
+            if !pads_share_copper_layer(&a.pad, &b.pad) { continue; }
+            let too_close = match (a.disk, b.disk) {
+                (Some((ca, ra)), Some((cb, rb))) => {
+                    let allow = clearance + ra.0 as i128 + rb.0 as i128;
+                    ca.distance_sq(cb) < allow * allow
+                }
+                (Some((c, r)), None) => {
+                    let allow = clearance + r.0 as i128;
+                    b.rect.distance_sq_to_point(c) < allow * allow
+                }
+                (None, Some((c, r))) => {
+                    let allow = clearance + r.0 as i128;
+                    a.rect.distance_sq_to_point(c) < allow * allow
+                }
+                (None, None) => {
+                    let allow_sq = clearance * clearance;
+                    rect_distance_sq(a.rect, b.rect) < allow_sq
+                }
+            };
+            if too_close {
+                let location = a.disk.map(|d| d.0).unwrap_or_else(|| a.rect.center());
+                diagnostics.push(
+                    Diagnostic::error(
+                        "DRC_125",
+                        format!(
+                            "pad '{}' ({}) is too close to pad '{}' ({})",
+                            a.number, a.designator, b.number, b.designator
+                        ),
+                    )
+                    .with_object(&a.comp.0)
+                    .with_location(location)
+                    .with_suggestion("increase spacing between components/pads or adjust placement"),
+                );
+            }
+        }
     }
 }
 
@@ -453,6 +864,17 @@ fn pad_on_layer(pad: &PadDefinition, layer: &Layer) -> bool {
     }
 }
 
+fn pad_relevant_to_via(pad: &PadDefinition, via: &Via, ir: &PcbIr) -> bool {
+    if pad.kind == papan_ir::PadKind::ThroughHole || pad.layers == papan_ir::PadLayers::Both {
+        return true;
+    }
+    match pad.layers {
+        papan_ir::PadLayers::Top => via_covers_layer(via, &ObjectId::stable("layer", "F.Cu"), ir),
+        papan_ir::PadLayers::Bottom => via_covers_layer(via, &ObjectId::stable("layer", "B.Cu"), ir),
+        papan_ir::PadLayers::Both => true,
+    }
+}
+
 fn via_covers_layer(via: &Via, layer: &ObjectId, ir: &PcbIr) -> bool {
     let from = ir.layer_by_id(&via.from_layer).map(|layer| layer.index);
     let to = ir.layer_by_id(&via.to_layer).map(|layer| layer.index);
@@ -480,8 +902,9 @@ fn rect_inside_outline(rect: Rect, ir: &PcbIr) -> bool {
 pub fn codes() -> BTreeSet<&'static str> {
     [
         "DRC_101", "DRC_102", "DRC_103", "DRC_104", "DRC_105", "DRC_106", "DRC_110", "DRC_111",
-        "DRC_112", "DRC_113", "DRC_120", "DRC_121", "DRC_122", "DRC_123", "DRC_130", "DRC_131",
-        "DRC_140", "DRC_150", "DRC_160", "DRC_161",
+        "DRC_112", "DRC_113", "DRC_120", "DRC_121", "DRC_122", "DRC_123", "DRC_124", "DRC_125",
+        "DRC_126", "DRC_130", "DRC_131", "DRC_132", "DRC_140", "DRC_150", "DRC_160", "DRC_161",
+        "DRC_170", "DRC_171", "DRC_172",
     ]
     .into_iter()
     .collect()
@@ -702,5 +1125,232 @@ mod tests {
         let mut ir = fixture();
         ir.find_component_mut("U2").unwrap().position = Some(Point::from_mm(10.2, 10.0));
         assert!(check_drc(&ir).iter().any(|d| d.code == "DRC_160"));
+    }
+
+    #[test]
+    fn detects_via_pad_clearance_violation() {
+        let mut ir = fixture();
+        ir.add_net(Net {
+            id: ObjectId::stable("net", "N2"),
+            name: "N2".into(),
+            kind: NetKind::Other,
+            voltage: None,
+            members: Vec::new(),
+            properties: BTreeMap::new(),
+            source_span: None,
+        });
+        ir.vias.push(papan_ir::Via {
+            id: ObjectId::stable("via", "V1"),
+            net: ObjectId::stable("net", "N2"),
+            at: Point::from_mm(10.0, 10.0), // overlaps U1 pad (N1)
+            drill: Length::from_mm(0.3),
+            diameter: Length::from_mm(0.6),
+            from_layer: ObjectId::stable("layer", "F.Cu"),
+            to_layer: ObjectId::stable("layer", "B.Cu"),
+            source_span: None,
+        });
+        let diagnostics = check_drc(&ir);
+        assert!(
+            diagnostics.iter().any(|d| d.code == "DRC_124"),
+            "expected DRC_124 via-pad clearance, got: {:?}",
+            diagnostics.iter().map(|d| &d.code).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn detects_pad_pad_clearance_violation_different_nets() {
+        let mut ir = PcbIr::new("DRC");
+        ir.board.width = Length::from_mm(60.0);
+        ir.board.height = Length::from_mm(40.0);
+        ir.board.outline = papan_geometry::Polygon::rect(ir.board.width, ir.board.height);
+        ir.add_definition(definition("chip", &["1"], 0.0));
+        let mut u1 = component("U1", "chip", 10.0, 10.0);
+        u1.definition_id = ObjectId::stable("part", "chip");
+        let mut u2 = component("U2", "chip", 10.9, 10.0); // pads ~0.1mm apart, clearance 0.2mm
+        u2.definition_id = ObjectId::stable("part", "chip");
+        ir.add_component(u1);
+        ir.add_component(u2);
+        let p1 = papan_ir::PinRef::new(ObjectId::stable("component", "U1"), "1");
+        let p2 = papan_ir::PinRef::new(ObjectId::stable("component", "U2"), "1");
+        ir.add_net(Net { id: ObjectId::stable("net", "N1"), name: "N1".into(), kind: NetKind::Other, voltage: None, members: vec![p1], properties: BTreeMap::new(), source_span: None });
+        ir.add_net(Net { id: ObjectId::stable("net", "N2"), name: "N2".into(), kind: NetKind::Other, voltage: None, members: vec![p2], properties: BTreeMap::new(), source_span: None });
+        let diagnostics = check_drc(&ir);
+        assert!(
+            diagnostics.iter().any(|d| d.code == "DRC_125"),
+            "expected DRC_125 pad-pad clearance, got: {:?}",
+            diagnostics.iter().map(|d| &d.code).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn detects_pad_edge_clearance_violation() {
+        let mut ir = PcbIr::new("DRC");
+        ir.board.width = Length::from_mm(60.0);
+        ir.board.height = Length::from_mm(40.0);
+        ir.board.outline = papan_geometry::Polygon::rect(ir.board.width, ir.board.height);
+        ir.add_definition(definition("chip", &["1"], 0.0));
+        let mut u1 = component("U1", "chip", 0.5, 10.0); // pad 0.8mm wide => edge 0.1mm from board, < 0.25mm
+        u1.definition_id = ObjectId::stable("part", "chip");
+        ir.add_component(u1);
+        let diagnostics = check_drc(&ir);
+        assert!(
+            diagnostics.iter().any(|d| d.code == "DRC_132"),
+            "expected DRC_132 pad edge clearance, got: {:?}",
+            diagnostics.iter().map(|d| &d.code).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn detects_hole_to_copper_clearance_violation() {
+        let mut ir = fixture();
+        ir.add_net(Net {
+            id: ObjectId::stable("net", "N2"),
+            name: "N2".into(),
+            kind: NetKind::Other,
+            voltage: None,
+            members: Vec::new(),
+            properties: BTreeMap::new(),
+            source_span: None,
+        });
+        // Foreign trace on F.Cu passing close to where a via hole will be.
+        ir.traces.push(papan_ir::Trace {
+            id: ObjectId::stable("trace", "T1"),
+            net: ObjectId::stable("net", "N2"),
+            layer: ObjectId::stable("layer", "F.Cu"),
+            width: Length::from_mm(0.15),
+            points: vec![Point::from_mm(20.0, 20.0), Point::from_mm(20.0, 22.0)],
+            source_span: None,
+        });
+        // Via on N1 (different net): drill edge will be too close to T1's copper.
+        // allow = drill/2 (0.15) + trace_width/2 (0.075) + clearance (0.20) = 0.425mm
+        // distance from (20.3,21.0) to segment x=20 => 0.30mm < 0.425mm
+        ir.vias.push(papan_ir::Via {
+            id: ObjectId::stable("via", "V1"),
+            net: ObjectId::stable("net", "N1"),
+            at: Point::from_mm(20.3, 21.0),
+            drill: Length::from_mm(0.3),
+            diameter: Length::from_mm(0.6),
+            from_layer: ObjectId::stable("layer", "F.Cu"),
+            to_layer: ObjectId::stable("layer", "B.Cu"),
+            source_span: None,
+        });
+        let diagnostics = check_drc(&ir);
+        assert!(
+            diagnostics.iter().any(|d| d.code == "DRC_126"),
+            "expected DRC_126 hole-to-copper clearance, got: {:?}",
+            diagnostics.iter().map(|d| &d.code).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn round_pad_disk_reduces_false_positive_clearance() {
+        // Circular Round pad (r=1mm) at (10,10). A trace runs along the AABB corner
+        // (x=11, y=10.8..11.0) which intersects the AABB edge but is > allowance+r
+        // from the disk center. AABB check would falsely flag DRC_121; disk must not.
+        let mut ir = PcbIr::new("DRC");
+        ir.board.width = Length::from_mm(60.0);
+        ir.board.height = Length::from_mm(40.0);
+        ir.board.outline = papan_geometry::Polygon::rect(ir.board.width, ir.board.height);
+        ir.constraints.clearance = Length::from_mm(0.1);
+        ir.definitions.clear();
+        ir.components.clear();
+        ir.nets.clear();
+        ir.connections.clear();
+        ir.traces.clear();
+        ir.vias.clear();
+
+        ir.add_definition(ComponentDefinition {
+            id: ObjectId::stable("part", "round"),
+            name: "round".into(),
+            category: ComponentCategory::Connector,
+            pins: vec![PinDefinition {
+                name: "1".into(),
+                number: "1".into(),
+                electrical: PinType::Passive,
+                description: String::new(),
+            }],
+            footprint: FootprintDefinition {
+                name: "round-fp".into(),
+                pads: vec![PadDefinition {
+                    number: "1".into(),
+                    pin: "1".into(),
+                    kind: PadKind::Smd,
+                    shape: PadShape::Round,
+                    position: Point::from_mm(0.0, 0.0),
+                    size: Size::from_mm(2.0, 2.0),
+                    drill: None,
+                    layers: PadLayers::Top,
+                }],
+                description: String::new(),
+            },
+            manufacturer: None,
+            datasheet: None,
+            description: String::new(),
+        });
+        ir.add_component(component("P1", "round", 10.0, 10.0));
+
+        // Foreign net on the pad
+        let pad_pin = papan_ir::PinRef::new(ObjectId::stable("component", "P1"), "1");
+        ir.add_net(Net {
+            id: ObjectId::stable("net", "NPAD"),
+            name: "NPAD".into(),
+            kind: NetKind::Other,
+            voltage: None,
+            members: vec![pad_pin.clone()],
+            properties: BTreeMap::new(),
+            source_span: None,
+        });
+        ir.connections.push(Connection {
+            id: ObjectId::stable("connection", "pad-npad"),
+            pin: pad_pin,
+            net: ObjectId::stable("net", "NPAD"),
+            source_span: None,
+        });
+        // Trace net (different)
+        ir.add_net(Net {
+            id: ObjectId::stable("net", "NTR"),
+            name: "NTR".into(),
+            kind: NetKind::Other,
+            voltage: None,
+            members: Vec::new(),
+            properties: BTreeMap::new(),
+            source_span: None,
+        });
+
+        // Segment along AABB right edge/corner region but outside disk.
+        // dist(center (10,10), nearest point (11,10.8)) = sqrt(1 + 0.64)=1.280mm
+        // allowance = clearance(0.1) + trace_half(0.05) + radius(1.0) = 1.15mm => OK.
+        ir.traces.push(Trace {
+            id: ObjectId::stable("trace", "corner"),
+            net: ObjectId::stable("net", "NTR"),
+            layer: ObjectId::stable("layer", "F.Cu"),
+            width: Length::from_mm(0.1),
+            points: vec![Point::from_mm(11.0, 10.8), Point::from_mm(11.0, 11.0)],
+            source_span: None,
+        });
+
+        let report = check_drc(&ir);
+        assert!(
+            !report.iter().any(|d| d.code == "DRC_121"),
+            "disk-accurate check should not flag AABB-corner false positive: {:?}",
+            report.iter().filter(|d| d.code == "DRC_121").collect::<Vec<_>>()
+        );
+
+        // Control: a trace genuinely too close to the disk must still be flagged.
+        ir.traces.push(Trace {
+            id: ObjectId::stable("trace", "close"),
+            net: ObjectId::stable("net", "NTR"),
+            layer: ObjectId::stable("layer", "F.Cu"),
+            width: Length::from_mm(0.1),
+            points: vec![Point::from_mm(11.02, 10.0), Point::from_mm(12.0, 10.0)],
+            source_span: None,
+        });
+        // dist(center, (11.02,10))=1.02mm < 1.15mm => violation
+        let report2 = check_drc(&ir);
+        assert!(
+            report2.iter().any(|d| d.code == "DRC_121"),
+            "genuinely close trace to round pad must be flagged: {:?}",
+            report2
+        );
     }
 }
